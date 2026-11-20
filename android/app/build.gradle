@@ -40,13 +40,13 @@ def flutterVersionCode = localProperties.getProperty('flutter.versionCode', '1')
 def flutterVersionName = localProperties.getProperty('flutter.versionName', '1.0')
 
 
-// unifiedpush pulls com.google.crypto.tink:tink (unified lib) while
-// flutter_secure_storage's androidx.security:security-crypto:1.1.0-alpha06
-// still depends on the older tink-android — both contain the same classes
-// and fail checkReleaseDuplicateClasses. The unified tink supersedes
-// tink-android, so drop the old one from every configuration.
+// Two Tink artifacts provide the same classes: UnifiedPush pulls the Java
+// `tink` (no Android integration), while androidx.security:security-crypto
+// needs `tink-android` for AndroidKeysetManager. Veilid's protected store
+// (EncryptedSharedPreferences) only works with the Android artifact, so keep
+// tink-android and drop the Java one instead of the other way around.
 configurations.all {
-    exclude group: 'com.google.crypto.tink', module: 'tink-android'
+    exclude group: 'com.google.crypto.tink', module: 'tink'
 }
 
 android {
@@ -104,6 +104,7 @@ android {
             signingConfig signingConfigs.release
             minifyEnabled true
             shrinkResources false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 }
