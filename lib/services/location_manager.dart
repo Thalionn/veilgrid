@@ -110,7 +110,7 @@ class LocationManager with ChangeNotifier {
             : const Duration(seconds: 30); // Reduced from 1 minute to 30 seconds
 
         if (timeSinceLastUpdate < throttleInterval) {
-          print("Throttling location broadcast - stationary and recent update exists");
+          debugPrint('[Location] throttled stationary update');
           return; // Skip broadcasting, but we've already updated _lastPosition
         }
       }
@@ -123,7 +123,7 @@ class LocationManager with ChangeNotifier {
 
     // Listen for motion changes
     _motionSubscription = _locationService.motionChangeStream.listen((isMoving) {
-      print(">>> Motion change: isMoving = $isMoving");
+      debugPrint('[Location] motion: $isMoving');
       _isMoving = isMoving;
       notifyListeners();
     });
@@ -184,13 +184,12 @@ class LocationManager with ChangeNotifier {
   Future<void> startTracking() async {
     if (_isTracking) return;
 
-    print("====== STARTING LOCATION TRACKING ======");
+    debugPrint('[Location] starting tracking');
 
     // Request permissions
     final permissionGranted = await _locationService.requestPermission();
     if (!permissionGranted) {
-      print("✗ ERROR: Location permission denied!");
-      print("  → Please enable location permissions in device settings");
+      debugPrint('[Location] permission denied');
       return;
     }
 
@@ -215,9 +214,9 @@ class LocationManager with ChangeNotifier {
       _locationStreamController.add(currentPos);
       notifyListeners();
       
-      print("Manual location ping completed: ${currentPos.latitude}, ${currentPos.longitude}");
+      debugPrint('Manual location ping completed');
     } catch (e) {
-      print("Error getting current position: $e");
+      debugPrint('[Location] current position failed: $e');
     }
   }
 

@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
-    <!-- Downloaded update APKs live in the app cache. -->
-    <cache-path name="cache" path="." />
-    <files-path name="files" path="." />
+    <!-- Only downloaded update APKs are shared, not the rest of the cache. -->
+    <cache-path name="updates" path="updates/" />
 </paths>

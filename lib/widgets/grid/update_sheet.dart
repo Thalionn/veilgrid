@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -77,6 +79,21 @@ class _UpdateSheetState extends State<UpdateSheet> {
         });
         return;
       }
+    }
+
+    // Refuse to hand the installer an APK signed by a different key. Android
+    // would reject it anyway, but this fails closed with a clear message.
+    if (!await UpdateService.instance.apkMatchesInstalledApp(_apkPath!)) {
+      try {
+        await File(_apkPath!).delete();
+      } catch (_) {}
+      if (!mounted) return;
+      setState(() {
+        _apkPath = null;
+        _error = 'The downloaded file is not signed by the same key as this '
+            'app. Install refused.';
+      });
+      return;
     }
 
     try {

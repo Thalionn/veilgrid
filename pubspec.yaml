@@ -1,7 +1,7 @@
 name: grid_frontend
 description: "VeilGrid: private, serverless location sharing over Veilid"
 publish_to: 'none'
-version: 2.3.0+2003
+version: 2.3.2+2005
 environment:
   sdk: '>=3.3.3 <4.0.0'
 
@@ -9,21 +9,21 @@ dependencies:
   flutter:
     sdk: flutter
   maplibre_gl: ^0.26.0
-  google_fonts: ^8.1.0
-  latlong2: ^0.9.1
-  shared_preferences: ^2.2.3
-  flutter_secure_storage: ^9.2.2
+  google_fonts: ^8.2.1
+  latlong2: ^0.10.1
+  shared_preferences: ^2.5.6
+  flutter_secure_storage: ^9.2.4
   path: ^1.9.1
-  path_provider: ^2.1.4
-  sqflite: ^2.3.3+1
+  path_provider: ^2.1.5
+  sqflite: ^2.4.2
   encrypt: ^5.0.3
-  http: ^1.2.2
-  permission_handler: ^11.3.1
+  http: ^1.5.0
+  permission_handler: ^12.0.1
   qr_flutter: ^4.1.0
   libre_location: ^0.4.1
-  geolocator: ^13.0.2
-  qr_code_scanner_plus: ^2.0.6
-  package_info_plus: ^8.1.2
+  geolocator: ^13.0.4
+  qr_code_scanner_plus: ^2.5.0
+  package_info_plus: ^8.3.1
   veilid:
     git:
       url: https://gitlab.com/veilid/veilid.git

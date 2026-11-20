@@ -166,7 +166,13 @@ class UpdateService {
     void Function(double progress)? onProgress,
   }) async {
     final dir = await getTemporaryDirectory();
-    final file = File('${dir.path}/grid-${info.buildNumber}.apk');
+    // Keep downloads in their own directory so the FileProvider only exposes
+    // this folder, not the whole cache.
+    final updateDir = Directory('${dir.path}/updates');
+    if (!await updateDir.exists()) {
+      await updateDir.create(recursive: true);
+    }
+    final file = File('${updateDir.path}/grid-${info.buildNumber}.apk');
     final client = http.Client();
     try {
       final request = http.Request('GET', Uri.parse(info.apkUrl));
@@ -222,6 +228,20 @@ class UpdateService {
     try {
       await _channel.invokeMethod('openInstallSettings');
     } catch (_) {}
+  }
+
+  /// True when the downloaded APK is signed by the same certificate as this
+  /// installed app (and has our package name).
+  Future<bool> apkMatchesInstalledApp(String apkPath) async {
+    try {
+      return await _channel.invokeMethod<bool>(
+            'verifyApk',
+            {'path': apkPath},
+          ) ??
+          false;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Hand the downloaded APK to the system installer.

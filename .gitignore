@@ -87,3 +87,6 @@ maestro-core-debug-*/
 .scratch/
 .claude/
 /env
+
+# Generated per build by the Flutter tool
+android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java

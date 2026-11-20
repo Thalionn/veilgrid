@@ -1,6 +1,8 @@
 package app.thalionn.veilgrid
 
 import android.content.Intent
+import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -9,6 +11,7 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
+import java.security.MessageDigest
 
 class MainActivity : FlutterActivity() {
     // Must match AppLifecycleChannel.channelName on the Dart side.
@@ -69,6 +72,19 @@ class MainActivity : FlutterActivity() {
                     }
                 }
 
+                // Reject an APK that is not signed by the same certificate as
+                // the installed app (or belongs to another package). Android
+                // enforces this at install time too, but checking first gives
+                // a clear error instead of a failed installer.
+                "verifyApk" -> {
+                    val path = call.argument<String>("path")
+                    if (path == null) {
+                        result.success(false)
+                        return@setMethodCallHandler
+                    }
+                    result.success(apkMatchesInstalledApp(File(path)))
+                }
+
                 "installApk" -> {
                     val path = call.argument<String>("path")
                     if (path == null) {
@@ -105,4 +121,56 @@ class MainActivity : FlutterActivity() {
             }
         }
     }
+
+    private fun apkMatchesInstalledApp(file: File): Boolean {
+        if (!file.exists()) return false
+        val pm = packageManager
+        val archive: PackageInfo? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            pm.getPackageArchiveInfo(
+                file.absolutePath,
+                PackageManager.GET_SIGNING_CERTIFICATES,
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            pm.getPackageArchiveInfo(file.absolutePath, PackageManager.GET_SIGNATURES)
+        }
+        if (archive == null || archive.packageName != packageName) return false
+
+        val installed: PackageInfo = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                pm.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+            } else {
+                @Suppress("DEPRECATION")
+                pm.getPackageInfo(packageName, PackageManager.GET_SIGNATURES)
+            }
+        } catch (e: Exception) {
+            return false
+        }
+
+        val expected = certificates(installed)
+        val actual = certificates(archive)
+        return expected.isNotEmpty() && expected == actual
+    }
+
+    private fun certificates(info: PackageInfo): Set<String> {
+        val result = mutableSetOf<String>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val signing = info.signingInfo ?: return result
+            val signers = if (signing.hasMultipleSigners()) {
+                signing.apkContentsSigners
+            } else {
+                signing.signingCertificateHistory
+            }
+            signers?.forEach { result.add(sha256(it.toByteArray())) }
+        } else {
+            @Suppress("DEPRECATION")
+            info.signatures?.forEach { result.add(sha256(it.toByteArray())) }
+        }
+        return result
+    }
+
+    private fun sha256(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(bytes)
+            .joinToString("") { "%02x".format(it) }
 }

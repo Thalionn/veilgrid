@@ -206,7 +206,7 @@ class VeilidService {
         _contactRoutes[address] = await _importContactRoute(address);
         _contactRouteResolvedAt[address] = DateTime.now();
       } catch (e) {
-        debugPrint('[Veilid] restore contact route failed for $address: $e');
+        debugPrint('[Veilid] restore contact route failed for ${_maskAddress(address)}: $e');
       }
     }
     // Restore per-contact pause state.
@@ -534,7 +534,7 @@ class VeilidService {
       await _pinContactKey(address, owner);
       return owner;
     } catch (e) {
-      debugPrint('[Veilid] identity key lookup failed for $address: $e');
+      debugPrint('[Veilid] identity key lookup failed for ${_maskAddress(address)}: $e');
       return null;
     }
   }
@@ -549,6 +549,15 @@ class VeilidService {
   String _newNonce() {
     final bytes = List<int>.generate(12, (_) => _random.nextInt(256));
     return base64Url.encode(bytes);
+  }
+
+  /// Log-safe form of a contact address.
+  String _maskAddress(String address) {
+    final parts = address.split(':');
+    if (parts.length >= 2 && parts[1].length > 8) {
+      return '${parts[0]}:${parts[1].substring(0, 8)}…';
+    }
+    return address.length > 12 ? '${address.substring(0, 10)}…' : address;
   }
 
   /// Count a dropped message; log at most once per 30s so a flood cannot turn
@@ -567,7 +576,7 @@ class VeilidService {
     if (repo == null) return;
     // Fire-and-forget; a keychain/DB hiccup must not break location delivery.
     unawaited(repo.addLocationPoint(address, lat, lng).catchError((Object e) {
-      debugPrint('[Veilid] history record failed for $address: $e');
+      debugPrint('[Veilid] history record failed for ${_maskAddress(address)}: $e');
     }));
   }
 
@@ -925,7 +934,7 @@ class VeilidService {
         // Clear the cache so the next send re-resolves a possibly-dead route.
         _contactRoutes.remove(address);
         _contactRouteResolvedAt.remove(address);
-        debugPrint('[Veilid] sendLocation failed for $address: $e');
+        debugPrint('[Veilid] sendLocation failed for ${_maskAddress(address)}: $e');
       }
     }
   }
