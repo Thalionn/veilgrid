@@ -2,8 +2,8 @@ import Foundation
 
 /// Shared storage between main app and NSE via App Group container
 final class SharedStorage {
-    static let appGroupID = "group.app.mygrid.grid"
-    static let keychainGroup = "app.mygrid.grid.shared"
+    static let appGroupID = "group.app.thalionn.veilgrid"
+    static let keychainGroup = "app.thalionn.veilgrid.shared"
     
     private let defaults: UserDefaults?
     

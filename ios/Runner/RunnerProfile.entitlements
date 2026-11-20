@@ -4,14 +4,12 @@
 <dict>
 	<key>com.apple.developer.associated-domains</key>
 	<array>
-		<string>webcredentials:mygrid.app</string>
-		<string>webcredentials:mygrid.app?mode=developer</string>
 	</array>
 	<key>com.apple.developer.in-app-payments</key>
 	<array/>
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>group.app.mygrid.grid</string>
+		<string>group.app.thalionn.veilgrid</string>
 	</array>
 	<key>aps-environment</key>
 	<string>production</string>

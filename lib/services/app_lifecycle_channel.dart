@@ -15,7 +15,7 @@ class AppLifecycleChannel {
       : _channel = channel ?? const MethodChannel(channelName);
 
   /// Name MUST match the channel registered in MainActivity.kt.
-  static const String channelName = 'app.mygrid.grid/lifecycle';
+  static const String channelName = 'app.thalionn.veilgrid/lifecycle';
 
   final MethodChannel _channel;
 

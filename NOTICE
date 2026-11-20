@@ -1,0 +1,33 @@
+VeilGrid
+========
+
+This program is a modified version of "Grid" - An end-to-end encrypted
+location-sharing application, Copyright (C) 2024 Chandler Gach
+(https://github.com/Rezivure/Grid-Mobile), licensed under the GNU Affero
+General Public License, version 3.
+
+Modifications, Copyright (C) 2026 the VeilGrid authors, made from 2026-11-19
+onward:
+
+- Removed the Matrix transport, accounts, login, groups, and the associated
+  server-side identity. The application no longer talks to a homeserver.
+- Added a peer-to-peer transport over Veilid private routes, with a DHT
+  rendezvous record as the user's stable address and QR/paste contact linking.
+- Added signed, allowlisted, replay-protected location messages; contact
+  removal and address rotation; and a hardware-backed identity store with an
+  explicit fallback warning.
+- Replaced the location history store with a per-address trail sealed using
+  AES-256-GCM, with a 7-day retention policy.
+- Added saved places with address search, presence, movement alerts, location
+  history viewing, and an on-map places layer.
+- Added in-app updates from GitHub Releases, replacing store distribution.
+- Removed analytics/telemetry endpoints, disabled Android cloud backup, and
+  deleted the upstream test, store-deployment, and Matrix integration
+  infrastructure.
+
+The original copyright notice and license text are retained in LICENSE. The
+complete corresponding source for this modified version is this repository.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.

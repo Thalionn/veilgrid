@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:grid_frontend/services/location/home_geofence_service.dart';
 import 'package:grid_frontend/services/location_manager.dart';
 import 'package:grid_frontend/services/sharing_state_notifier.dart';
 import 'package:grid_frontend/services/theme_controller.dart';
 import 'package:grid_frontend/services/units_controller.dart';
+import 'package:grid_frontend/services/update_service.dart';
 import 'package:grid_frontend/services/veilid_service.dart';
 import 'package:grid_frontend/widgets/grid/grid_mono.dart';
+import 'package:grid_frontend/widgets/grid/update_sheet.dart';
 
 /// Settings tab: sharing, units, appearance, home location, notifications, and
 /// app info — the pieces of the original settings that still apply to the
@@ -24,12 +27,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _autoPauseAtHome = false;
   bool _notifications = true;
   String? _displayName;
+  String _versionLabel = '';
+  bool _checkingUpdate = false;
 
   @override
   void initState() {
     super.initState();
     _loadHome();
     _loadName();
+    _loadVersion();
     SharingStateNotifier.instance.addListener(_onChanged);
     UnitsController.instance.addListener(_onChanged);
     ThemeController.instance.addListener(_onChanged);
@@ -140,6 +146,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
         SnackBar(content: Text(name.trim().isEmpty
             ? 'Display name cleared'
             : 'Display name set to "$name"')),
+      );
+    }
+  }
+
+  Future<void> _loadVersion() async {
+    final info = await PackageInfo.fromPlatform();
+    if (mounted) {
+      setState(() => _versionLabel = '${info.version} (${info.buildNumber})');
+    }
+  }
+
+  Future<void> _checkForUpdates() async {
+    if (_checkingUpdate) return;
+    setState(() => _checkingUpdate = true);
+    try {
+      final info = await UpdateService.instance.checkForUpdate();
+      if (!mounted) return;
+      setState(() => _checkingUpdate = false);
+      if (info == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('You are running the latest version.')),
+        );
+      } else {
+        await showModalBottomSheet<void>(
+          context: context,
+          isScrollControlled: true,
+          backgroundColor: Colors.transparent,
+          builder: (_) => UpdateSheet(info: info),
+        );
+      }
+    } on UpdateException catch (e) {
+      if (!mounted) return;
+      setState(() => _checkingUpdate = false);
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _checkingUpdate = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not check for updates.')),
       );
     }
   }
@@ -334,6 +380,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const ListTile(
             title: Text('Grid'),
             subtitle: Text('Peer-to-peer location sharing over Veilid'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.system_update_outlined),
+            title: const Text('Check for updates'),
+            subtitle: Text(_versionLabel.isEmpty
+                ? 'Installed from GitHub Releases'
+                : 'Version $_versionLabel'),
+            trailing: _checkingUpdate
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.chevron_right),
+            onTap: _checkingUpdate ? null : _checkForUpdates,
           ),
           const ListTile(
             title: Text('Your address'),

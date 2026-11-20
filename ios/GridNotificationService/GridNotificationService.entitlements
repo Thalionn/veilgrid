@@ -4,11 +4,11 @@
 <dict>
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>group.app.mygrid.grid</string>
+		<string>group.app.thalionn.veilgrid</string>
 	</array>
 	<key>keychain-access-groups</key>
 	<array>
-		<string>$(AppIdentifierPrefix)app.mygrid.grid.shared</string>
+		<string>$(AppIdentifierPrefix)app.thalionn.veilgrid.shared</string>
 	</array>
 </dict>
 </plist>

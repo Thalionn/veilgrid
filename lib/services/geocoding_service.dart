@@ -41,7 +41,7 @@ class GeocodingService {
 
   static const String _host = 'nominatim.openstreetmap.org';
   static const String _userAgent =
-      'Grid/2.1 (peer-to-peer location sharing; https://mygrid.app)';
+      'VeilGrid/2.2 (peer-to-peer location sharing; https://github.com/Thalionn/veilgrid)';
   static const Duration _minInterval = Duration(milliseconds: 1100);
 
   DateTime? _lastRequestAt;

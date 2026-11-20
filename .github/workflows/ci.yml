@@ -1,224 +1,30 @@
-name: Grid CI
+name: CI
 
 on:
   push:
-    branches:
-      - main
-  pull_request:
     branches: [main]
+  pull_request:
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  unit-tests:
-    name: Unit Tests
-    # Pure Dart tests - no Mac needed. GitHub-hosted runners are free for
-    # public repos and keep the self-hosted host free for builds.
+  analyze:
+    name: Analyze
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.41.5'
+          flutter-version: '3.50.0'
           channel: stable
           cache: true
 
-      - name: Create CI .env
-        run: |
-          cat > .env << 'EOF'
-          MATRIX_SERVER_URL=https://matrix.mygrid.app
-          GAUTH_URL=https://gauth.mygrid.app
-          HOMESERVER=matrix.mygrid.app
-          MAPS_URL=https://map.mygrid.app/v1/protomaps.pmtiles
-          VERSION_CHECK_URL=https://version.mygrid.app
-          TURNSTILE_SITE_KEY=0x4AAAAAACuoM-Fe6MODnKzk
-          EOF
+      - name: Install dependencies
+        run: flutter pub get
 
-      - name: Run Flutter unit tests
-        run: flutter test --reporter expanded
-
-  core-e2e-tests:
-    name: Core E2E Tests (Fast)
-    # Currently disabled. The `false &&` keeps it off; the second clause is
-    # the real condition for when it comes back - the simulator host is only
-    # wired up for branches in this repo.
-    if: >-
-      false &&
-      github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 10
-    needs: unit-tests
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Create CI .env
-        run: |
-          cat > .env << 'EOF'
-          MATRIX_SERVER_URL=https://matrix.mygrid.app
-          GAUTH_URL=https://gauth.mygrid.app
-          HOMESERVER=matrix.mygrid.app
-          MAPS_URL=https://map.mygrid.app/v1/protomaps.pmtiles
-          VERSION_CHECK_URL=https://version.mygrid.app
-          TURNSTILE_SITE_KEY=0x4AAAAAACuoM-Fe6MODnKzk
-          EOF
-
-      - name: Start test infrastructure
-        run: |
-          export PATH="/opt/homebrew/bin:$HOME/.maestro/bin:$PATH"
-          # Start Synapse and create test accounts
-          bash test-infra/scripts/run-e2e.sh --only infra 2>&1
-
-      - name: Run core Maestro flows
-        run: |
-          export PATH="/opt/homebrew/bin:$HOME/.maestro/bin:$PATH"
-          ./run-maestro.sh core --report-dir test-infra/reports/maestro-core
-
-      - name: Stop test infrastructure
-        if: always()
-        run: |
-          export PATH="/opt/homebrew/bin:$PATH"
-          cd test-infra && docker compose down -v 2>&1 || true
-
-      # Artifact uploads removed — storage quota was full and they're not needed for a solo project
-
-  deploy-testflight:
-    name: Deploy to TestFlight & Play Store
-    runs-on: [self-hosted, macOS, ARM64]
-    needs: [unit-tests]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # Full history: the build number is derived from the commit count.
-          fetch-depth: 0
-
-      - name: Set dynamic build number
-        run: |
-          export PATH="/opt/homebrew/bin:$PATH"
-          # Derive the build number from the commit count on main, shared
-          # with the release workflow (.github/workflows/release.yml) so the
-          # two never interleave. github.run_number cannot be used: it is
-          # per-workflow, so CI (many runs/day) and Release (weekly) drifted
-          # apart and shipped out-of-order builds to TestFlight.
-          #
-          # Offset 319 put the first build of this scheme at 1000. It is
-          # one-way — never lower it, or Play Store rejects the upload.
-          COMMIT_COUNT=$(git rev-list --count HEAD)
-          if [ "$COMMIT_COUNT" -lt 600 ]; then
-            echo "::error::Commit count $COMMIT_COUNT is implausibly low - is this a shallow checkout? Refusing to build a number that would go backwards."
-            exit 1
-          fi
-          BUILD_NUMBER=$(( COMMIT_COUNT + 319 ))
-          VERSION_NAME=$(grep '^version:' pubspec.yaml | sed 's/version: *//;s/+.*//')
-          # Update pubspec.yaml for this build only (not committed)
-          sed -i '' "s/^version: .*/version: ${VERSION_NAME}+${BUILD_NUMBER}/" pubspec.yaml
-          echo "📦 Building version: ${VERSION_NAME}+${BUILD_NUMBER}"
-          echo "BUILD_NUMBER=${BUILD_NUMBER}" >> $GITHUB_ENV
-          echo "VERSION_NAME=${VERSION_NAME}" >> $GITHUB_ENV
-
-      - name: Create .env
-        run: |
-          cat > .env << 'EOF'
-          MATRIX_SERVER_URL=https://matrix.mygrid.app
-          GAUTH_URL=https://gauth.mygrid.app
-          HOMESERVER=matrix.mygrid.app
-          MAPS_URL=https://map.mygrid.app/v1/protomaps.pmtiles
-          VERSION_CHECK_URL=https://version.mygrid.app
-          TURNSTILE_SITE_KEY=0x4AAAAAACuoM-Fe6MODnKzk
-          EOF
-
-      - name: Set up Android signing
-        run: |
-          cp "$HOME/.fastlane-secrets/local.properties" android/local.properties
-          cp "$HOME/.fastlane-secrets/grid-prod-key.jks" android/app/grid-prod-key.jks
-
-      - name: Install signing certificate
-        env:
-          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
-          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: |
-          # Create variables
-          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
-          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
-
-          # Decode certificate
-          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
-
-          # Create temp keychain
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-
-          # Import certificate
-          security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-
-          # Add to search list
-          security list-keychains -d user -s $KEYCHAIN_PATH login.keychain-db
-
-      - name: Install provisioning profile
-        run: |
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          cp "$HOME/.fastlane-secrets/Grid_Appstore_CI.mobileprovision" \
-            ~/Library/MobileDevice/Provisioning\ Profiles/fafae38f-8ebf-4447-8eb7-ba01d807e6bb.mobileprovision
-
-      - name: Set up Fastlane secrets
-        run: |
-          mkdir -p fastlane/keys
-          cp "$HOME/.fastlane-secrets/AuthKey.p8" fastlane/keys/AuthKey.p8
-          cp "$HOME/.fastlane-secrets/.env" fastlane/.env
-          cp "$HOME/.fastlane-secrets/google-play-key.json" fastlane/google-play-key.json
-
-      - name: Restore Firebase iOS config
-        run: |
-          cp "$HOME/.fastlane-secrets/GoogleService-Info.plist" ios/Runner/GoogleService-Info.plist
-
-      - name: Restore Firebase Android config
-        run: |
-          cp "$HOME/.fastlane-secrets/google-services.json" android/app/google-services.json
-
-      - name: Clean iOS build artifacts
-        run: |
-          export PATH="/opt/homebrew/bin:$PATH"
-          flutter clean
-          rm -rf ~/Library/Developer/Xcode/DerivedData/Runner-*
-          rm -rf ios/Pods ios/Podfile.lock ios/.symlinks ios/build
-
-      - name: Build & Upload iOS to TestFlight
-        run: |
-          export LC_ALL=en_US.UTF-8
-          export LANG=en_US.UTF-8
-          export PATH="/opt/homebrew/lib/ruby/gems/3.3.0/bin:/opt/homebrew/opt/ruby@3.3/bin:/opt/homebrew/bin:$PATH"
-          fastlane ios beta
-
-      - name: Build & Upload Android to Play Store Internal
-        run: |
-          export LC_ALL=en_US.UTF-8
-          export LANG=en_US.UTF-8
-          export PATH="/opt/homebrew/lib/ruby/gems/3.3.0/bin:/opt/homebrew/opt/ruby@3.3/bin:/opt/homebrew/bin:$PATH"
-          fastlane android beta
-
-      - name: Build release APK for contributors
-        run: |
-          export PATH="/opt/homebrew/bin:$PATH"
-          flutter build apk --release
-
-      - name: Upload release APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: grid-${{ env.VERSION_NAME }}-${{ env.BUILD_NUMBER }}-release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
-          if-no-files-found: error
-          # Kept short so artifact storage stays bounded.
-          retention-days: 14
-
-      - name: Clean up keychain
-        if: always()
-        run: |
-          security delete-keychain $RUNNER_TEMP/app-signing.keychain-db || true
+      - name: Static analysis
+        run: flutter analyze --no-fatal-infos

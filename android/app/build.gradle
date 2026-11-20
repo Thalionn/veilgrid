@@ -50,7 +50,7 @@ configurations.all {
 }
 
 android {
-    namespace "app.mygrid.grid"
+    namespace "app.thalionn.veilgrid"
     compileSdkVersion rootProject.ext.compileSdkVersion
     ndkVersion "28.0.12433566"
 
@@ -71,7 +71,7 @@ android {
     }
 
     defaultConfig {
-        applicationId "app.mygrid.grid"
+        applicationId "app.thalionn.veilgrid"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode flutterVersionCode.toInteger()
