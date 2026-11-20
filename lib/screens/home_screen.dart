@@ -32,7 +32,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final messenger = ScaffoldMessenger.of(context);
     messenger.showSnackBar(
       SnackBar(
-        content: Text('Grid ${info.version} is available'),
+        content: Text('VeilGrid ${info.version} is available'),
         duration: const Duration(seconds: 10),
         action: SnackBarAction(
           label: 'Update',

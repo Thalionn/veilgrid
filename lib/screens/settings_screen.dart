@@ -378,7 +378,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 24),
           _sectionLabel(context, 'About'),
           const ListTile(
-            title: Text('Grid'),
+            title: Text('VeilGrid'),
             subtitle: Text('Peer-to-peer location sharing over Veilid'),
           ),
           ListTile(

@@ -120,7 +120,7 @@ class _VeilidIdentityScreenState extends State<VeilidIdentityScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Your Grid ID'),
+        title: const Text('Your VeilGrid ID'),
         actions: [
           IconButton(
             icon: const Icon(Icons.map_outlined),

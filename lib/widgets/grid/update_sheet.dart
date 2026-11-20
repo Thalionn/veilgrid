@@ -101,7 +101,7 @@ class _UpdateSheetState extends State<UpdateSheet> {
             GridSheetHeader(
               title: 'Update available',
               subtitle:
-                  'Grid ${widget.info.version} (${widget.info.buildNumber})',
+                  'VeilGrid ${widget.info.version} (${widget.info.buildNumber})',
               onClose: () => Navigator.of(context).pop(),
             ),
             const SizedBox(height: 12),
