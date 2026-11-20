@@ -43,11 +43,11 @@ flutter build apk --release
 mkdir -p "$DIST"
 cp build/app/outputs/flutter-apk/app-release.apk "$APK"
 
-PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
-if [ -n "$PREV_TAG" ]; then
-  git log --pretty=format:'- %s' "$PREV_TAG..HEAD" > "$DIST/notes.md"
+PREV_BUMP=$(git log -n 1 --skip=1 --format=%H -- pubspec.yaml)
+if [ -n "$PREV_BUMP" ]; then
+  git log --pretty=format:'- %s' --no-merges "$PREV_BUMP..HEAD" > "$DIST/notes.md"
 else
-  git log --pretty=format:'- %s' -n 15 > "$DIST/notes.md"
+  git log --pretty=format:'- %s' --no-merges -n 20 > "$DIST/notes.md"
 fi
 if [ ! -s "$DIST/notes.md" ]; then
   printf 'Initial release.' > "$DIST/notes.md"
