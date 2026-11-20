@@ -29,8 +29,6 @@ class GridButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isPrimary = style == GridButtonStyle.primary;
-    final isDanger = style == GridButtonStyle.danger;
-    final isGhost = style == GridButtonStyle.ghost;
 
     final Color bg = switch (style) {
       GridButtonStyle.primary => context.gridColors.surface2,

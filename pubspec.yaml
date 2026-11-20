@@ -130,7 +130,6 @@ flutter:
     - assets/extras/satellite.png
     - assets/extras/basemaps.png
     - assets/geocoder/cities500.bin.gz
-    - env
 
   fonts:
     - family: GridFont
