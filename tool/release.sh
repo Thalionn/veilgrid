@@ -43,14 +43,19 @@ flutter build apk --release
 mkdir -p "$DIST"
 cp build/app/outputs/flutter-apk/app-release.apk "$APK"
 
-PREV_BUMP=$(git log -n 1 --skip=1 --format=%H -- pubspec.yaml)
-if [ -n "$PREV_BUMP" ]; then
-  git log --pretty=format:'- %s' --no-merges "$PREV_BUMP..HEAD" > "$DIST/notes.md"
+CUSTOM_NOTES="release-notes/$VERSION.md"
+if [ -f "$CUSTOM_NOTES" ]; then
+  cp "$CUSTOM_NOTES" "$DIST/notes.md"
 else
-  git log --pretty=format:'- %s' --no-merges -n 20 > "$DIST/notes.md"
-fi
-if [ ! -s "$DIST/notes.md" ]; then
-  printf 'Initial release.' > "$DIST/notes.md"
+  PREV_BUMP=$(git log -n 1 --skip=1 --format=%H -- pubspec.yaml)
+  if [ -n "$PREV_BUMP" ]; then
+    git log --pretty=format:'- %s' --no-merges "$PREV_BUMP..HEAD" > "$DIST/notes.md"
+  else
+    git log --pretty=format:'- %s' --no-merges -n 20 > "$DIST/notes.md"
+  fi
+  if [ ! -s "$DIST/notes.md" ]; then
+    printf 'Initial release.' > "$DIST/notes.md"
+  fi
 fi
 
 python3 - "$VERSION" "$BUILD" "$REPO" "$TAG" "$DIST" <<'PY'
@@ -84,7 +89,7 @@ if [ "$PUBLISH" != "1" ]; then
   echo "Not published. Publish with:"
   echo "    tool/release.sh --publish"
   echo "or manually:"
-  echo "    gh release create $TAG \"$APK\" \"$DIST/latest.json\" --title \"Grid $VERSION\" --notes-file \"$DIST/notes.md\""
+  echo "    gh release create $TAG \"$APK\" \"$DIST/latest.json\" --title \"VeilGrid $VERSION\" --notes-file \"$DIST/notes.md\""
   exit 0
 fi
 
@@ -95,7 +100,7 @@ fi
 
 echo "==> Publishing $TAG to $REPO"
 gh release create "$TAG" "$APK" "$DIST/latest.json" \
-  --title "Grid $VERSION" \
+  --title "VeilGrid $VERSION" \
   --notes-file "$DIST/notes.md"
 
 echo
