@@ -60,6 +60,7 @@ class VeilidService {
   static const _contactsPrefKey = 'veilid_contacts';
   static const _pausedPrefKey = 'veilid_paused_contacts';
   static const _myRecordKeyPrefKey = 'veilid_my_record_key';
+  static const _myRecordOwnerPrefKey = 'veilid_my_record_owner';
   static const _myNamePrefKey = 'veilid_display_name';
   static const _contactNamesPrefKey = 'veilid_contact_names';
   static const _contactKeysPrefKey = 'veilid_contact_public_keys';
@@ -625,19 +626,32 @@ class VeilidService {
   /// Veilid's generateKeyPair mints a *fresh random* pair each call (it does
   /// not persist), so we store it ourselves; otherwise the writer keypair would
   /// stop matching our DHT record's owner after a restart.
-  Future<KeyPair> _keyPairOrCreate() async {
-    if (_keyPair != null) return _keyPair!;
+  // Memoized so concurrent startup callers (the map, the contacts screen and
+  // the route publisher) cannot each mint a keypair or a DHT record and leave
+  // the losing record orphaned.
+  Future<KeyPair>? _keyPairFuture;
+  Future<RecordKey>? _recordKeyFuture;
+
+  Future<KeyPair> _keyPairOrCreate() {
+    if (_keyPair != null) return Future.value(_keyPair!);
+    return _keyPairFuture ??= _loadOrCreateKeyPair().then((kp) {
+      _keyPair = kp;
+      return kp;
+    }).whenComplete(() {
+      if (_keyPair == null) _keyPairFuture = null;
+    });
+  }
+
+  Future<KeyPair> _loadOrCreateKeyPair() async {
     final saved = await Veilid.instance.loadUserSecret(_myKeyPairSecretKey);
     if (saved != null && saved.isNotEmpty) {
       try {
-        _keyPair = KeyPair.fromString(utf8.decode(saved));
-        return _keyPair!;
+        return KeyPair.fromString(utf8.decode(saved));
       } catch (_) {
         // Fall through and mint a fresh pair.
       }
     }
     final kp = await Veilid.instance.generateKeyPair(cryptoKindVLD0);
-    _keyPair = kp;
     await Veilid.instance.saveUserSecret(
       _myKeyPairSecretKey,
       Uint8List.fromList(utf8.encode(kp.toString())),
@@ -652,19 +666,42 @@ class VeilidService {
     return (await _myRecordKeyOrCreate()).toString();
   }
 
-  Future<RecordKey> _myRecordKeyOrCreate() async {
-    if (_myRecordKey != null) return _myRecordKey!;
+  Future<RecordKey> _myRecordKeyOrCreate() {
+    if (_myRecordKey != null) return Future.value(_myRecordKey!);
+    return _recordKeyFuture ??= _loadOrCreateRecordKey().then((key) {
+      _myRecordKey = key;
+      return key;
+    }).whenComplete(() {
+      if (_myRecordKey == null) _recordKeyFuture = null;
+    });
+  }
+
+  Future<RecordKey> _loadOrCreateRecordKey() async {
+    final kp = await _keyPairOrCreate();
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getString(_myRecordKeyPrefKey);
     if (saved != null && saved.isNotEmpty) {
-      try {
-        _myRecordKey = RecordKey.fromString(saved);
-        return _myRecordKey!;
-      } catch (_) {
-        // Fall through and recreate a fresh record.
+      // A record can only be written by the keypair that owns it. If the
+      // protected store changed (e.g. the hardware store became available
+      // after a fallback), the saved record belongs to a key we no longer
+      // have, and every publish would fail schema validation. Replace it.
+      final savedOwner = prefs.getString(_myRecordOwnerPrefKey);
+      final ownerMatches =
+          savedOwner == null || savedOwner == kp.key.toString();
+      if (ownerMatches) {
+        try {
+          _myRecordKey = RecordKey.fromString(saved);
+          return _myRecordKey!;
+        } catch (_) {
+          // Fall through and recreate a fresh record.
+        }
+      } else {
+        debugPrint(
+            '[Veilid] saved address belongs to a previous identity key; creating a new address');
+        await prefs.remove(_myRecordKeyPrefKey);
+        await prefs.remove(_myRecordOwnerPrefKey);
       }
     }
-    final kp = await _keyPairOrCreate();
     final context = _routingContext!;
     final desc = await context.createDHTRecord(
       cryptoKindVLD0,
@@ -673,6 +710,7 @@ class VeilidService {
     );
     _myRecordKey = desc.key;
     await prefs.setString(_myRecordKeyPrefKey, desc.key.toString());
+    await prefs.setString(_myRecordOwnerPrefKey, kp.key.toString());
     return _myRecordKey!;
   }
 
@@ -1014,8 +1052,11 @@ class VeilidService {
     _keyPair = newKeyPair;
 
     _myRecordKey = null;
+    _recordKeyFuture = null;
+    _keyPairFuture = null;
     _myRouteId = null;
     await prefs.remove(_myRecordKeyPrefKey);
+    await prefs.remove(_myRecordOwnerPrefKey);
 
     final newKey = await _myRecordKeyOrCreate();
     await publishMyRoute();
