@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:io' show Platform;
+
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:libre_location/libre_location.dart' as libre;
 import 'location_service.dart';
 import 'location_update.dart';
@@ -61,8 +63,6 @@ class LibreLocationService implements LocationService {
         final locationUpdate = _mapPositionToLocationUpdate(position);
         _locationStreamController.add(locationUpdate);
         DebugLogService.instance.log('location', {
-          'latitude': position.latitude,
-          'longitude': position.longitude,
           'accuracy': position.accuracy,
           'speed': position.speed,
           'heading': position.heading,
@@ -84,8 +84,6 @@ class LibreLocationService implements LocationService {
         _locationStreamController.add(locationUpdate);
         DebugLogService.instance.log('motion_change', {
           'isMoving': position.isMoving,
-          'lat': position.latitude,
-          'lng': position.longitude,
         });
       });
 
@@ -182,10 +180,8 @@ class LibreLocationService implements LocationService {
       );
       
       final locationUpdate = _mapPositionToLocationUpdate(position);
-      print("Manual location ping completed: ${locationUpdate.latitude}, ${locationUpdate.longitude}");
+      debugPrint('[Location] manual ping completed');
       DebugLogService.instance.log('location', {
-        'latitude': position.latitude,
-        'longitude': position.longitude,
         'accuracy': position.accuracy,
         'speed': position.speed,
         'heading': position.heading,
