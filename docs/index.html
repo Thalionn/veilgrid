@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VeilGrid — private location sharing</title>
+<meta name="description" content="Private, serverless location sharing for Android. No accounts. Download and install directly.">
+<style>
+  :root {
+    --bg: #191B1E;
+    --surface: #20242A;
+    --text: #F2F5F4;
+    --muted: #9AA5A1;
+    --mint: #00DBA4;
+    --hairline: #2C3238;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: 640px; margin: 0 auto; padding: 48px 24px 64px; }
+  .icon {
+    width: 112px; height: 112px; border-radius: 26px;
+    box-shadow: 0 10px 40px rgba(0,0,0,.45);
+    display: block;
+  }
+  h1 { font-size: 34px; letter-spacing: -0.02em; margin: 24px 0 6px; }
+  .tag { color: var(--muted); margin: 0 0 28px; }
+  .btn {
+    display: block; text-align: center;
+    background: var(--mint); color: #06251D;
+    font-weight: 700; font-size: 17px;
+    padding: 17px 20px; border-radius: 14px;
+    text-decoration: none;
+  }
+  .btn:active { transform: translateY(1px); }
+  .meta { color: var(--muted); font-size: 13px; margin: 10px 0 0; text-align: center; }
+  h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .08em; color: var(--mint); margin: 36px 0 10px; }
+  ol { margin: 0; padding-left: 22px; }
+  ol li { margin: 0 0 10px; }
+  a { color: var(--mint); }
+  .card { background: var(--surface); border: 1px solid var(--hairline); border-radius: 16px; padding: 16px 18px; }
+  footer { margin-top: 40px; padding-top: 18px; border-top: 1px solid var(--hairline); color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <img class="icon" src="logo.png" alt="VeilGrid icon" width="112" height="112">
+  <h1>VeilGrid</h1>
+  <p class="tag">Private, serverless location sharing. No account, no sign-up — just link contacts by QR.</p>
+
+  <a class="btn" href="https://github.com/Thalionn/veilgrid/releases/latest/download/veilgrid-latest.apk">Download for Android</a>
+  <p class="meta">APK · Android 8 and newer · iPhone isn’t supported yet</p>
+
+  <h2>How to install</h2>
+  <ol>
+    <li>Tap the button above and wait for the download to finish.</li>
+    <li>Open the file. Android asks to allow installs from your browser (or Files) — allow it, then tap <strong>Install</strong>.</li>
+    <li>Open VeilGrid and allow location access. On the second screen choose <strong>Allow all the time</strong>, otherwise sharing stops when the app is in the background.</li>
+    <li>Add people: <strong>Contacts → Add contact</strong>, then scan their QR code (or paste their code).</li>
+  </ol>
+
+  <h2>Updates</h2>
+  <div class="card">
+    The app updates itself. Open <strong>Settings → Check for updates</strong> and install when a new
+    version is offered — no store needed.
+  </div>
+
+  <h2>Privacy</h2>
+  <div class="card">
+    Locations travel directly between devices over Veilid, and history stays encrypted on the
+    phone. There are no accounts and no analytics. Two things do leave the device: map tiles and
+    the text you type into place search.
+  </div>
+
+  <footer>
+    <a href="https://github.com/Thalionn/veilgrid">Source code</a> · AGPL-3.0 ·
+    based on <a href="https://github.com/Rezivure/Grid-Mobile">Grid</a> by Chandler Gach
+  </footer>
+</main>
+</body>
+</html>

@@ -36,12 +36,15 @@ fi
 TAG="v$VERSION"
 DIST="build/dist"
 APK="$DIST/grid-$VERSION.apk"
+# Stable filename so the website link never changes between releases.
+LATEST_APK="$DIST/veilgrid-latest.apk"
 
 echo "==> Building Grid $VERSION ($BUILD) for $REPO"
 flutter build apk --release
 
 mkdir -p "$DIST"
 cp build/app/outputs/flutter-apk/app-release.apk "$APK"
+cp build/app/outputs/flutter-apk/app-release.apk "$LATEST_APK"
 
 CUSTOM_NOTES="release-notes/$VERSION.md"
 if [ -f "$CUSTOM_NOTES" ]; then
@@ -76,7 +79,7 @@ PY
 
 echo
 echo "==> Staged:"
-ls -lh "$APK" "$DIST/latest.json" | sed 's/^/    /'
+ls -lh "$APK" "$LATEST_APK" "$DIST/latest.json" | sed 's/^/    /'
 echo
 echo "==> Release notes:"
 sed 's/^/    /' "$DIST/notes.md"
@@ -89,7 +92,7 @@ if [ "$PUBLISH" != "1" ]; then
   echo "Not published. Publish with:"
   echo "    tool/release.sh --publish"
   echo "or manually:"
-  echo "    gh release create $TAG \"$APK\" \"$DIST/latest.json\" --title \"VeilGrid $VERSION\" --notes-file \"$DIST/notes.md\""
+  echo "    gh release create $TAG \"$APK\" \"$LATEST_APK\" \"$DIST/latest.json\" --title \"VeilGrid $VERSION\" --notes-file \"$DIST/notes.md\""
   exit 0
 fi
 
@@ -99,7 +102,7 @@ if gh release view "$TAG" >/dev/null 2>&1; then
 fi
 
 echo "==> Publishing $TAG to $REPO"
-gh release create "$TAG" "$APK" "$DIST/latest.json" \
+gh release create "$TAG" "$APK" "$LATEST_APK" "$DIST/latest.json" \
   --title "VeilGrid $VERSION" \
   --notes-file "$DIST/notes.md"
 

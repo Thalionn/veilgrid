@@ -31,10 +31,13 @@ refuses invalid coordinates.
 
 ## Install
 
-1. Open the [latest release](https://github.com/Thalionn/veilgrid/releases/latest).
-2. Download `grid-<version>.apk`.
-3. Android will ask you to allow installing from your browser (or Files) the
-   first time.
+Easiest: open **https://thalionn.github.io/veilgrid/** on the phone and tap
+**Download for Android**. Or grab the APK from the
+[latest release](https://github.com/Thalionn/veilgrid/releases/latest)
+(`veilgrid-latest.apk` always points at the newest build).
+
+Android will ask you to allow installing from your browser (or Files) the
+first time.
 
 ## Updates
 
