@@ -5,10 +5,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:encrypt/encrypt.dart';
 import 'package:grid_frontend/services/secure_storage_provider.dart';
-import 'package:grid_frontend/repositories/location_repository.dart';
 import 'package:grid_frontend/repositories/location_history_repository.dart';
-import 'package:grid_frontend/repositories/sharing_preferences_repository.dart';
-import 'package:grid_frontend/repositories/map_icon_repository.dart';
 
 /// Thrown when the encryption key can't be found under any known
 /// accessibility level. Caller (typically main.dart) shows a recovery dialog.
@@ -71,17 +68,11 @@ class DatabaseService {
       version: 5,  // v5: LocationHistory rekeyed from Matrix userId to Veilid address
       onCreate: (db, version) async {
         await _initializeEncryptionKey();
-        await LocationRepository.createTable(db);
         await LocationHistoryRepository.createTable(db);
-        await SharingPreferencesRepository.createTable(db);
-        await MapIconRepository.createTable(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
           await LocationHistoryRepository.createTable(db);
-        }
-        if (oldVersion < 3) {
-          await MapIconRepository.createTable(db);
         }
         if (oldVersion < 5) {
           // Rekey LocationHistory: userId column -> address (Veilid record key),

@@ -40,7 +40,7 @@ APK="$DIST/grid-$VERSION.apk"
 LATEST_APK="$DIST/veilgrid-latest.apk"
 
 echo "==> Building Grid $VERSION ($BUILD) for $REPO"
-flutter build apk --release
+flutter build apk --release --target-platform android-arm64
 
 mkdir -p "$DIST"
 cp build/app/outputs/flutter-apk/app-release.apk "$APK"

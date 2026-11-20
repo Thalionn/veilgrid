@@ -4,19 +4,6 @@ plugins {
     id "dev.flutter.flutter-gradle-plugin"
 }
 
-// The Google Services plugin needs google-services.json (Firebase config),
-// which is not committed to the repo. Apply it only when a config file is
-// present so a plain debug build without Firebase still works. FCM push is
-// optional at runtime (Firebase.initializeApp is wrapped in try/catch and the
-// app falls back to UnifiedPush).
-def hasGoogleServicesJson =
-    file('google-services.json').exists() ||
-    file('src/google-services.json').exists() ||
-    file('src/debug/google-services.json').exists()
-if (hasGoogleServicesJson) {
-    apply plugin: 'com.google.gms.google-services'
-}
-
 // Load local.properties
 def localProperties = new Properties()
 def localPropertiesFile = rootProject.file('local.properties')
@@ -49,6 +36,12 @@ configurations.all {
     exclude group: 'com.google.crypto.tink', module: 'tink'
 }
 
+// Ship one ABI in release builds: every phone that runs this app is arm64 and
+// the universal APK was 179 MB. Debug builds keep all ABIs for emulators.
+def buildingRelease = gradle.startParameter.taskNames.any {
+    it.toLowerCase().contains('release')
+}
+
 android {
     namespace "app.thalionn.veilgrid"
     compileSdkVersion rootProject.ext.compileSdkVersion
@@ -67,6 +60,11 @@ android {
     packagingOptions {
         jniLibs {
             useLegacyPackaging = false
+            // Flutter's Gradle plugin overrides ndk.abiFilters with every
+            // target platform, so drop the non-phone ABIs here instead.
+            if (buildingRelease) {
+                excludes += ["lib/armeabi-v7a/**", "lib/x86/**", "lib/x86_64/**"]
+            }
         }
     }
 
@@ -77,9 +75,6 @@ android {
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
         manifestPlaceholders = [applicationName: "android.app.Application"]
-        ndk {
-            abiFilters "arm64-v8a", "armeabi-v7a"
-        }
     }
 
 
@@ -116,6 +111,4 @@ flutter {
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
     coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.0.3"
-    implementation platform('com.google.firebase:firebase-bom:33.7.0')
-    implementation 'com.google.firebase:firebase-messaging'
 }
