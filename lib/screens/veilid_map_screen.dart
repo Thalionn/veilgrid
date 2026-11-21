@@ -287,10 +287,17 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     final lat = double.tryParse(parts[0]);
     final lng = double.tryParse(parts[1]);
     if (lat == null || lng == null) return;
-    final radiusMeters = prefs.getDouble('home_radius') ?? 25;
+    final radiusMeters = prefs.getDouble('home_radius') ?? 150;
 
-    // Rough meters->pixels at the current zoom (accurate enough for a hint).
-    final radiusPx = (radiusMeters / 10).clamp(12.0, 80.0);
+    // True ground radius: convert metres to pixels for the current zoom (and
+    // latitude) instead of a fixed approximation, so it scales with the map.
+    final zoom = controller.cameraPosition?.zoom ?? 14;
+    final metersPerPixel = 40075016.686 *
+        math.cos(lat * math.pi / 180) /
+        (256 * math.pow(2, zoom));
+    final radiusPx = metersPerPixel.isFinite && metersPerPixel > 0
+        ? (radiusMeters / metersPerPixel).clamp(6.0, 12000.0)
+        : 30.0;
 
     _homeCircles.add(await controller.addCircle(CircleOptions(
       geometry: LatLng(lat, lng),
@@ -540,6 +547,8 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
             onCameraIdle: () {
               if (!mounted || !_active) return;
               _refreshPlaces();
+              // Keep the home circle at its true ground size on every zoom.
+              _refreshHome();
             },
             onStyleLoadedCallback: () {
               if (!mounted) return;
