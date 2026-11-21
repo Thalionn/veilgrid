@@ -58,7 +58,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (!mounted) return;
     setState(() {
       _homeLocation = prefs.getString('home_location');
-      _homeRadius = prefs.getDouble('home_radius') ?? 25;
+      _homeRadius = (prefs.getDouble('home_radius') ?? 150).clamp(50.0, 1000.0);
       _autoPauseAtHome = prefs.getBool('auto_pause_at_home_enabled') ?? false;
       _notifications = prefs.getBool('notifications_enabled') ?? true;
     });
@@ -309,6 +309,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: const Text('Set home to current position'),
             leading: const Icon(Icons.my_location),
             onTap: _setHomeToCurrent,
+          ),
+          ListTile(
+            leading: const Icon(Icons.radar),
+            title: const Text('Home radius'),
+            subtitle: Text(
+                '${_homeRadius.round()} m — pause sharing within this distance'),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Slider(
+              value: _homeRadius.clamp(50.0, 1000.0),
+              min: 50,
+              max: 1000,
+              divisions: 19,
+              label: '${_homeRadius.round()} m',
+              onChanged: (v) {
+                setState(() => _homeRadius = v);
+                _setPref('home_radius', v);
+                HomeGeofenceService.instance.syncFromPrefs();
+              },
+            ),
           ),
           ListTile(
             title: const Text('Clear home location'),

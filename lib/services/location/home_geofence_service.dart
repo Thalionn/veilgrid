@@ -1,25 +1,29 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:geolocator/geolocator.dart';
 import 'package:libre_location/libre_location.dart' as libre;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../sharing_state_notifier.dart';
+import '../location_manager.dart';
 
-/// Registers a single libre_location geofence around the user's saved
-/// home, listens for ENTER/EXIT, and flips [SharingStateNotifier] so the
-/// throttle in [LocationDispatch] stops posting while the user is home.
+/// Pauses sharing while the user is at their saved home.
 ///
-/// Reads:
-///   - `home_location` pref → `"<lat>,<lng>"`
-///   - `home_radius` pref   → double (meters)
-///   - `auto_pause_at_home_enabled` pref → bool master switch
+/// Uses the position stream and a distance check rather than the plugin's
+/// OS geofence API: libre_location 0.4.3 throws while parsing its own
+/// geofence events on Android (`_Map<Object?, Object?>` cast), so those
+/// transitions never arrive. The distance check also handles the case the
+/// OS geofence cannot: being **already inside** the radius when home is set
+/// (a geofence only reports enter/exit transitions).
 ///
-/// All three are owned by `SettingsPage` today; this service is the only
-/// thing that consumes them outside of the map's visual circle.
+/// Tracking runs in a foreground service, so the position stream keeps
+/// flowing while the app is backgrounded, which is when auto-pause matters.
 ///
-/// `start()` is idempotent. Call `syncFromPrefs()` whenever the user
-/// changes home location / radius / the master toggle.
+/// Reads `home_location` ("lat,lng"), `home_radius` (metres) and
+/// `auto_pause_at_home_enabled`. Radius changes apply immediately through
+/// [syncFromPrefs].
 class HomeGeofenceService {
   HomeGeofenceService._(this._sharingState);
   static final HomeGeofenceService instance =
@@ -27,127 +31,102 @@ class HomeGeofenceService {
 
   final SharingStateNotifier _sharingState;
 
-  // Platform geofences below this radius produce false triggers on
-  // most phones (the OS's own location accuracy floor is ~50–100m).
-  // The UI can let the user pick smaller values for the visual circle,
-  // but for the actual platform-monitored region we clamp up.
-  static const double _minPlatformRadiusM = 50;
+  // Below this, GPS jitter alone can flip the state.
+  static const double _minRadiusM = 50;
 
-  static const String _geofenceId = 'grid_home';
-
-  StreamSubscription<libre.GeofenceEvent>? _sub;
+  StreamSubscription<libre.Position>? _positionSub;
   bool _started = false;
-  bool _registered = false;
+
+  double? _homeLat;
+  double? _homeLng;
+  double? _radiusMeters;
+  bool _monitoring = false;
 
   Future<void> start() async {
     if (_started) return;
     _started = true;
-    _sub = libre.LibreLocation.geofenceStream.listen(_onEvent);
+    _positionSub = libre.LibreLocation.positionStream.listen(
+      (position) => _evaluate(position.latitude, position.longitude),
+      onError: (Object e) {
+        // A broken position event must not take the app down.
+        debugPrint('[Home] position stream error: $e');
+      },
+    );
     await syncFromPrefs();
   }
 
   Future<void> stop() async {
-    await _sub?.cancel();
-    _sub = null;
-    if (_registered) {
-      try {
-        await libre.LibreLocation.removeGeofence(_geofenceId);
-      } catch (_) {}
-      _registered = false;
-    }
+    await _positionSub?.cancel();
+    _positionSub = null;
+    _monitoring = false;
     _started = false;
   }
 
-  /// Re-reads the home prefs and registers (or removes) the platform
-  /// geofence. Safe to call repeatedly — `addGeofence` is idempotent on
-  /// the same id and we explicitly remove first to refresh radius
-  /// changes cleanly.
+  /// Re-reads the home prefs and immediately evaluates the current position
+  /// against them, so being home at the moment of setup pauses right away.
   Future<void> syncFromPrefs() async {
-    // When sharing is fully off, monitor nothing — a live geofence keeps the
-    // OS location indicator lit even with tracking stopped.
     if (_sharingState.userIncognito) {
-      await _unregister();
+      _clear();
       return;
     }
 
     final prefs = await SharedPreferences.getInstance();
     final enabled = prefs.getBool('auto_pause_at_home_enabled') ?? false;
     final raw = prefs.getString('home_location');
-    final radius = prefs.getDouble('home_radius') ?? 25;
+    final radius = prefs.getDouble('home_radius') ?? 150;
 
     if (!enabled || raw == null || raw.isEmpty) {
-      await _unregister();
+      _clear();
       return;
     }
 
     final parts = raw.split(',');
     if (parts.length != 2) {
-      await _unregister();
+      _clear();
       return;
     }
     final lat = double.tryParse(parts[0].trim());
     final lng = double.tryParse(parts[1].trim());
     if (lat == null || lng == null) {
-      await _unregister();
+      _clear();
       return;
     }
 
-    // Clamp to platform minimum. Visual circle in the picker can still
-    // show 10m; the monitored region uses the floor.
-    final effective = math.max(radius, _minPlatformRadiusM);
+    _homeLat = lat;
+    _homeLng = lng;
+    _radiusMeters = math.max(radius, _minRadiusM);
+    _monitoring = true;
 
-    try {
-      // Remove any existing registration first so radius/lat/lng
-      // changes take effect rather than silently no-op'ing.
-      await libre.LibreLocation.removeGeofence(_geofenceId);
-    } catch (_) {}
-
-    try {
-      await libre.LibreLocation.addGeofence(
-        libre.Geofence(
-          id: _geofenceId,
-          latitude: lat,
-          longitude: lng,
-          radiusMeters: effective,
-          triggers: const {
-            libre.GeofenceTransition.enter,
-            libre.GeofenceTransition.exit,
-          },
-        ),
-      );
-      _registered = true;
-    } catch (_) {
-      // Plugin may not be tracking yet (no permission, or location
-      // service disabled). The pref is set; we'll be re-driven from
-      // settings the next time the user touches the toggle.
-      _registered = false;
+    final me = LocationManager.instance.currentLatLng;
+    if (me != null) {
+      _evaluate(me.latitude, me.longitude);
     }
   }
 
-  Future<void> _unregister() async {
-    if (!_registered) return;
-    try {
-      await libre.LibreLocation.removeGeofence(_geofenceId);
-    } catch (_) {}
-    _registered = false;
+  void _clear() {
+    _monitoring = false;
+    _homeLat = null;
+    _homeLng = null;
+    _radiusMeters = null;
+    _sharingState.setPausedAtHome(false);
   }
 
-  void _onEvent(libre.GeofenceEvent event) {
-    if (event.geofence.id != _geofenceId) return;
-    switch (event.transition) {
-      case libre.GeofenceTransition.enter:
-        // Pause sharing while the user is at home. LocationDispatch
-        // reads isPaused on the next fix and stops posting; an "at
-        // home" final post will already have been sent on the STILL
-        // transition that triggered this enter.
-        _sharingState.setPausedAtHome(true);
-        break;
-      case libre.GeofenceTransition.exit:
-        _sharingState.setPausedAtHome(false);
-        break;
-      case libre.GeofenceTransition.dwell:
-        // Not registered — no-op.
-        break;
+  void _evaluate(double lat, double lng) {
+    final homeLat = _homeLat;
+    final homeLng = _homeLng;
+    final radius = _radiusMeters;
+    if (!_monitoring || homeLat == null || homeLng == null || radius == null) {
+      return;
+    }
+
+    final meters = Geolocator.distanceBetween(homeLat, homeLng, lat, lng);
+    final paused = _sharingState.pausedAtHome;
+
+    if (!paused && meters <= radius) {
+      _sharingState.setPausedAtHome(true);
+    } else if (paused && meters > radius + math.max(30, radius * 0.2)) {
+      // Hysteresis keeps boundary jitter from flapping the pause state.
+      _sharingState.setPausedAtHome(false);
     }
   }
 }

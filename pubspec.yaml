@@ -1,7 +1,7 @@
 name: grid_frontend
 description: "VeilGrid: private, serverless location sharing over Veilid"
 publish_to: 'none'
-version: 2.3.2+2005
+version: 2.3.3+2006
 environment:
   sdk: '>=3.3.3 <4.0.0'
 
@@ -41,14 +41,14 @@ flutter_launcher_icons:
   adaptive_icon_padding: false
 
 flutter_native_splash:
-  color: "#F8F8F7"
+  color: "#0B0D0F"
   color_dark: "#0B0D0F"
   image: "assets/brand/01-logos/grid-symbol-color-512.png"
   image_dark: "assets/brand/01-logos/grid-symbol-color-dark-512.png"
   android_12:
     image: "assets/brand/01-logos/grid-symbol-color-splash12-704.png"
     image_dark: "assets/brand/01-logos/grid-symbol-color-dark-splash12-704.png"
-    color: "#F8F8F7"
+    color: "#0B0D0F"
     color_dark: "#0B0D0F"
   ios: true
   android: true

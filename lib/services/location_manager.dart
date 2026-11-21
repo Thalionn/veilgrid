@@ -8,6 +8,7 @@ import 'location/location_service_config.dart';
 import 'location/libre_location_service.dart';
 import 'location/location_dispatch.dart';
 import 'sharing_state_notifier.dart';
+import '../utilities/lat_lng_validation.dart';
 
 /// A simpler location manager relying on the plugin's own stop-detection.
 /// Battery Saver Mode slightly changes the config, otherwise we let
@@ -21,6 +22,7 @@ class LocationManager with ChangeNotifier {
   final LocationService _locationService = LibreLocationService();
 
   LocationUpdate? _lastPosition;
+  LatLng? _lastKnown;
   bool _isTracking = false;
   bool _isInForeground = true;
   bool _isMoving = false;
@@ -36,6 +38,9 @@ class LocationManager with ChangeNotifier {
   /// persisted sharing mode so the first config push uses the user's choice
   /// rather than the default.
   Future<void> initialize() async {
+    // Hydrate the last fix first so the map can start on the user's location
+    // instead of a placeholder before the tracker delivers anything.
+    await _loadLastKnown();
     await _loadTrackingMode();
     _initializeLifecycleListener();
     // Pausing (incognito or the home geofence) must also relax the GPS
@@ -71,6 +76,29 @@ class LocationManager with ChangeNotifier {
     );
   }
 
+  /// The most recent fix we know of, persisted across launches. Null until
+  /// the first fix ever.
+  LatLng? get lastKnownLatLng => _lastKnown ?? currentLatLng;
+
+  Future<void> _loadLastKnown() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lat = prefs.getDouble('last_fix_lat');
+    final lng = prefs.getDouble('last_fix_lng');
+    if (lat != null && lng != null && isFiniteLatLng(lat, lng)) {
+      _lastKnown = LatLng(lat, lng);
+    }
+  }
+
+  void _remember(LocationUpdate fix) {
+    if (!isFiniteLatLng(fix.latitude, fix.longitude)) return;
+    _lastKnown = LatLng(fix.latitude, fix.longitude);
+    // Fire-and-forget: the next launch should open where we were.
+    unawaited(SharedPreferences.getInstance().then((prefs) async {
+      await prefs.setDouble('last_fix_lat', fix.latitude);
+      await prefs.setDouble('last_fix_lng', fix.longitude);
+    }));
+  }
+
   /// Reads the same `sharing_mode` pref that [LocationDispatch] owns and
   /// writes. Deliberately not a second pref: LocationManager and
   /// LocationDispatch both push a preset to the plugin, and when they
@@ -99,6 +127,7 @@ class LocationManager with ChangeNotifier {
       
       // Always update our internal position to keep it fresh
       _lastPosition = location;
+      _remember(location);
       
       // Smart throttling: Only skip SENDING updates if stationary and recent
       if (!_isMoving && _lastLocationUpdate != null) {
@@ -210,6 +239,7 @@ class LocationManager with ChangeNotifier {
       
       // Always update position and timestamp for manual requests
       _lastPosition = currentPos;
+      _remember(currentPos);
       _lastLocationUpdate = DateTime.now();
       _locationStreamController.add(currentPos);
       notifyListeners();

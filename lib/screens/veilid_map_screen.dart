@@ -102,7 +102,8 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     });
     // The tracker's stationary interval is long (up to ~15 min), so force a
     // fresh fix on open instead of waiting for the next scheduled update.
-    if (LocationManager.instance.currentLatLng == null) {
+    if (LocationManager.instance.currentLatLng == null ||
+        LocationManager.instance.isLocationStale) {
       LocationManager.instance.grabLocationAndPing();
     }
   }
@@ -496,10 +497,12 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
       _styleLoaded = false;
     }
 
-    final me = LocationManager.instance.currentLatLng;
-    final LatLng initialTarget = me != null
-        ? LatLng(me.latitude, me.longitude)
-        : const LatLng(37.7749, -122.4194);
+    // Start where we last were (persisted across launches). Only fall back to
+    // a zoomed-out world view when there has never been a fix — anything else
+    // shows a misleading arbitrary city until GPS arrives.
+    final known = LocationManager.instance.lastKnownLatLng;
+    final LatLng initialTarget =
+        known != null ? LatLng(known.latitude, known.longitude) : const LatLng(20.0, 0.0);
 
     return Scaffold(
       appBar: AppBar(
@@ -528,7 +531,7 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
             styleString: _styleJson!,
             initialCameraPosition: CameraPosition(
               target: initialTarget,
-              zoom: 14,
+              zoom: known != null ? 15 : 1.5,
             ),
             onMapCreated: (controller) {
               _controller = controller;

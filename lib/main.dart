@@ -15,10 +15,14 @@ import 'package:grid_frontend/services/location/home_geofence_service.dart';
 import 'package:grid_frontend/repositories/location_history_repository.dart';
 import 'package:grid_frontend/screens/home_screen.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Hydrate the persisted last fix before the first frame, so the map opens
+  // on the user's location instead of a placeholder. This is only prefs and
+  // listener setup (fast); hardware tracking starts after the UI is up.
+  await LocationManager.instance.initialize();
   runApp(const GridApp());
-  _initLocation();
+  _startLocation();
   _initHistory();
   _initSharing();
   _initPublish();
@@ -26,14 +30,13 @@ void main() {
 
 /// Best-effort location boot: start tracking so "Send location" has a real
 /// fix. Fire-and-forget so it never blocks first frame or crashes boot.
-Future<void> _initLocation() async {
+Future<void> _startLocation() async {
   try {
-    await LocationManager.instance.initialize();
     await LocationManager.instance.startTracking();
     // Start the home geofence once tracking is up (auto-pause at home).
     await HomeGeofenceService.instance.start();
   } catch (e) {
-    debugPrint('[Location] init failed (non-fatal): $e');
+    debugPrint('[Location] start failed (non-fatal): $e');
   }
 }
 
