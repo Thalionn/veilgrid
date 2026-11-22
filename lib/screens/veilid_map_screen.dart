@@ -7,11 +7,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:grid_frontend/models/location_history.dart';
 import 'package:grid_frontend/models/place.dart';
 import 'package:grid_frontend/screens/map/grid_map_style.dart';
+import 'package:grid_frontend/screens/battery_settings_screen.dart';
 import 'package:grid_frontend/screens/veilid_scan_screen.dart';
 import 'package:grid_frontend/services/veilid_service.dart';
 import 'package:grid_frontend/services/location_manager.dart';
 import 'package:grid_frontend/services/places_service.dart';
+import 'package:grid_frontend/services/map_data_saver.dart';
 import 'package:grid_frontend/services/sharing_state_notifier.dart';
+import 'package:grid_frontend/styles/grid_colors.dart';
 import 'package:grid_frontend/utilities/lat_lng_validation.dart';
 import 'package:grid_frontend/widgets/contact_detail_sheet.dart';
 import 'package:grid_frontend/widgets/grid/grid_button.dart';
@@ -58,6 +61,7 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
   bool _markerRefreshRunning = false;
   bool _markerRefreshQueued = false;
   bool _active = true;
+  bool _dataSaverActive = false;
 
   @override
   void didChangeDependencies() {
@@ -88,6 +92,8 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     LocationManager.instance.addListener(_onLocation);
     SharingStateNotifier.instance.addListener(_onSharingChanged);
     PlacesService.instance.addListener(_onPlacesChanged);
+    MapDataSaver.instance.addListener(_onDataSaverChanged);
+    MapDataSaver.instance.start();
     _contactsSub = VeilidService.instance.contactsChanged.listen((_) {
       if (!_active || !mounted) return;
       setState(() {});
@@ -113,6 +119,7 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     LocationManager.instance.removeListener(_onLocation);
     SharingStateNotifier.instance.removeListener(_onSharingChanged);
     PlacesService.instance.removeListener(_onPlacesChanged);
+    MapDataSaver.instance.removeListener(_onDataSaverChanged);
     _trailDebounce?.cancel();
     _locSub?.cancel();
     _historySub?.cancel();
@@ -315,6 +322,10 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     )));
   }
 
+  void _onDataSaverChanged() {
+    if (mounted) setState(() {});
+  }
+
   void _onPlacesChanged() {
     if (!mounted || !_active) return;
     _refreshPlaces();
@@ -498,9 +509,11 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    if (_isDark != isDark) {
+    final dataSaver = MapDataSaver.instance.active;
+    if (_isDark != isDark || _dataSaverActive != dataSaver) {
       _isDark = isDark;
-      _styleJson = buildGridMapStyle(dark: isDark);
+      _dataSaverActive = dataSaver;
+      _styleJson = buildGridMapStyle(dark: isDark, dataSaver: dataSaver);
       _styleLoaded = false;
     }
 
@@ -563,6 +576,46 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
               _refreshPlaces();
             },
           ),
+          if (_dataSaverActive)
+            Positioned(
+              top: 12,
+              left: 16,
+              right: 16,
+              child: Center(
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(999),
+                    onTap: () {
+                      Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => const BatterySettingsScreen(),
+                      ));
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: context.gridColors.surface2,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: context.gridColors.hairline),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.data_saver_on,
+                              size: 14, color: context.gridColors.mint),
+                          const SizedBox(width: 6),
+                          Text('Basemap off on mobile data',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: context.gridColors.text)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
           Positioned(
             left: 0,
             right: 0,

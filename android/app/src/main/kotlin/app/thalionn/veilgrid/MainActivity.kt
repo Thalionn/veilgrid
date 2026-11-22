@@ -10,6 +10,8 @@ import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import org.maplibre.android.MapLibre
+import org.maplibre.android.offline.OfflineManager
 import java.io.File
 import java.security.MessageDigest
 
@@ -22,6 +24,22 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        // Keep a large persistent basemap cache: re-panning and later sessions
+        // then reuse tiles instead of downloading them again over cellular.
+        try {
+            MapLibre.getInstance(applicationContext)
+            OfflineManager.getInstance(applicationContext)
+                .setMaximumAmbientCacheSize(
+                    512L * 1024 * 1024,
+                    object : OfflineManager.FileSourceCallback {
+                        override fun onSuccess() {}
+                        override fun onError(message: String) {}
+                    },
+                )
+        } catch (e: Exception) {
+            android.util.Log.w("VeilGrid", "ambient cache setup failed", e)
+        }
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,

@@ -47,7 +47,23 @@ String? customPmtilesUrl(String? mapsUrl, {String? mapsUrlType}) {
 String buildGridMapStyle({
   required bool dark,
   String? pmtilesUrl,
+  bool dataSaver = false,
 }) {
+  // Data saver: no tile source at all. Markers, trails, places and the home
+  // circle are annotations, so they still render on the plain background.
+  if (dataSaver) {
+    return jsonEncode({
+      'version': 8,
+      'sources': <String, dynamic>{},
+      'layers': [
+        {
+          'id': 'background',
+          'type': 'background',
+          'paint': {'background-color': dark ? '#0B0D0F' : '#F8F8F7'},
+        }
+      ],
+    });
+  }
   pmtilesUrl ??= _activePmtilesUrl;
   final spriteFlavor = dark ? 'dark' : 'light';
   final style = <String, dynamic>{

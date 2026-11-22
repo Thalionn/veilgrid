@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:grid_frontend/services/battery_guard.dart';
 import 'package:grid_frontend/services/location/location_dispatch.dart';
+import 'package:grid_frontend/services/map_data_saver.dart';
 import 'package:grid_frontend/services/location_manager.dart';
 import 'package:grid_frontend/styles/grid_colors.dart';
 
@@ -29,7 +30,19 @@ class _BatterySettingsScreenState extends State<BatterySettingsScreen> {
   @override
   void initState() {
     super.initState();
+    MapDataSaver.instance.addListener(_onDataSaverChanged);
+    MapDataSaver.instance.start();
     _load();
+  }
+
+  @override
+  void dispose() {
+    MapDataSaver.instance.removeListener(_onDataSaverChanged);
+    super.dispose();
+  }
+
+  void _onDataSaverChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _load() async {
@@ -153,6 +166,25 @@ class _BatterySettingsScreenState extends State<BatterySettingsScreen> {
             ),
             const SizedBox(height: 8),
           ],
+
+          _sectionLabel(context, 'Map'),
+          SwitchListTile(
+            title: const Text('Wi-Fi only basemap'),
+            subtitle: const Text(
+                'Hide map tiles on mobile data; contacts, trails and places still show'),
+            value: MapDataSaver.instance.enabled,
+            onChanged: (v) => MapDataSaver.instance.setEnabled(v),
+          ),
+          if (MapDataSaver.instance.enabled)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Text(
+                MapDataSaver.instance.onCellular
+                    ? 'Currently on mobile data — basemap hidden.'
+                    : 'Currently on Wi-Fi — basemap visible.',
+                style: TextStyle(fontSize: 12, color: c.text3),
+              ),
+            ),
 
           _sectionLabel(context, 'Low battery'),
           ListTile(
