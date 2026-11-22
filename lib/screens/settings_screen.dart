@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:grid_frontend/services/location/home_geofence_service.dart';
+import 'package:grid_frontend/screens/battery_settings_screen.dart';
 import 'package:grid_frontend/services/location_manager.dart';
 import 'package:grid_frontend/services/sharing_state_notifier.dart';
 import 'package:grid_frontend/services/theme_controller.dart';
@@ -275,6 +276,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
             subtitle: const Text('Go incognito — stop sharing your live location'),
             value: incognito,
             onChanged: (v) => SharingStateNotifier.instance.setUserIncognito(v),
+          ),
+
+          const SizedBox(height: 12),
+          _sectionLabel(context, 'Battery'),
+          ListTile(
+            leading: const Icon(Icons.battery_saver_outlined),
+            title: const Text('Battery & tracking'),
+            subtitle: const Text(
+                'Update rate, battery saver mode, low-battery pause'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => const BatterySettingsScreen(),
+              ));
+            },
           ),
 
           const SizedBox(height: 12),

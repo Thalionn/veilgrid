@@ -12,6 +12,7 @@ import 'package:grid_frontend/services/sharing_state_notifier.dart';
 import 'package:grid_frontend/services/veilid_service.dart';
 import 'package:grid_frontend/services/database_service.dart';
 import 'package:grid_frontend/services/location/home_geofence_service.dart';
+import 'package:grid_frontend/services/battery_guard.dart';
 import 'package:grid_frontend/repositories/location_history_repository.dart';
 import 'package:grid_frontend/screens/home_screen.dart';
 
@@ -26,6 +27,7 @@ Future<void> main() async {
   _initHistory();
   _initSharing();
   _initPublish();
+  BatteryGuard.instance.start();
 }
 
 /// Best-effort location boot: start tracking so "Send location" has a real

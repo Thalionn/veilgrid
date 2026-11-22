@@ -1,7 +1,7 @@
 name: grid_frontend
 description: "VeilGrid: private, serverless location sharing over Veilid"
 publish_to: 'none'
-version: 2.3.4+2007
+version: 2.3.5+2008
 environment:
   sdk: '>=3.3.3 <4.0.0'
 
@@ -29,6 +29,7 @@ dependencies:
       url: https://gitlab.com/veilid/veilid.git
       path: veilid-flutter
       ref: v0.5.8
+  battery_plus: ^7.1.2
 
 flutter_launcher_icons:
   android: true

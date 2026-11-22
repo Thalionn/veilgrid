@@ -25,10 +25,13 @@ class SharingStateNotifier extends ChangeNotifier {
 
   bool _userIncognito = false;
   bool _pausedAtHome = false;
+  bool _pausedForBattery = false;
 
   bool get userIncognito => _userIncognito;
   bool get pausedAtHome => _pausedAtHome;
-  bool get isPaused => _userIncognito || _pausedAtHome;
+  bool get pausedForBattery => _pausedForBattery;
+  bool get isPaused =>
+      _userIncognito || _pausedAtHome || _pausedForBattery;
 
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -52,6 +55,14 @@ class SharingStateNotifier extends ChangeNotifier {
   void setPausedAtHome(bool value) {
     if (_pausedAtHome == value) return;
     _pausedAtHome = value;
+    notifyListeners();
+  }
+
+  /// Ephemeral low-battery pause; not persisted. Cleared when charging or
+  /// when the battery recovers above the configured threshold.
+  void setPausedForBattery(bool value) {
+    if (_pausedForBattery == value) return;
+    _pausedForBattery = value;
     notifyListeners();
   }
 }

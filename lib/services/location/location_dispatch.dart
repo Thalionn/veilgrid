@@ -55,11 +55,21 @@ enum LocationActivity { still, walking, inVehicle, unknown }
 ///
 /// `start()` is idempotent — safe to call once at app boot.
 class LocationDispatch {
-  LocationDispatch(this._sharingState);
+  LocationDispatch(this._sharingState) {
+    instance = this;
+  }
+
+  /// The dispatch created at boot, so settings can re-read its throttle.
+  static LocationDispatch? instance;
 
   final SharingStateNotifier _sharingState;
 
   SharingMode _mode = SharingMode.balanced;
+
+  // Optional user-defined throttle, overriding the per-mode tables.
+  bool _customEnabled = false;
+  double _customDistanceM = 100;
+  Duration _customInterval = const Duration(seconds: 60);
   LocationActivity _activity = LocationActivity.unknown;
   DateTime? _lastPostAt;
   LocationUpdate? _lastPostedLocation;
@@ -107,6 +117,7 @@ class LocationDispatch {
     // Hydrate the user-chosen mode without blocking the start path.
     final prefs = await SharedPreferences.getInstance();
     _mode = SharingModePref.fromPrefValue(prefs.getString('sharing_mode'));
+    await reloadSettings();
 
     _motionSub = libre.LibreLocation.onMotionChange.listen((p) {
       if (!p.isMoving) {
@@ -131,6 +142,17 @@ class LocationDispatch {
   }
 
   SharingMode get mode => _mode;
+
+  /// Re-reads the custom throttle preferences. Called at start and whenever
+  /// the battery settings change.
+  Future<void> reloadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    _customEnabled = prefs.getBool('custom_throttle_enabled') ?? false;
+    final seconds = (prefs.getInt('custom_interval_seconds') ?? 60).clamp(15, 3600);
+    final meters = (prefs.getInt('custom_distance_meters') ?? 100).clamp(10, 5000);
+    _customInterval = Duration(seconds: seconds);
+    _customDistanceM = meters.toDouble();
+  }
 
   /// Switches the user-facing mode. Persists the choice, swaps the
   /// underlying `libre_location` preset, and rewires the throttle on
@@ -194,7 +216,15 @@ class LocationDispatch {
       fix.latitude,
       fix.longitude,
     );
-    final t = _thresholdsFor(_activity, _mode, cruising: _isCruising);
+    final t = _customEnabled
+        ? _Thresholds(
+            distanceM: _customDistanceM,
+            interval: _customInterval,
+            heartbeat: Duration(
+              seconds: math.max(_customInterval.inSeconds * 4, 300),
+            ),
+          )
+        : _thresholdsFor(_activity, _mode, cruising: _isCruising);
 
     if (distance >= t.distanceM || elapsed >= t.interval) {
       _record(fix, now);
