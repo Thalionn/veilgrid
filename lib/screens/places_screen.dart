@@ -152,6 +152,11 @@ class _PlacesScreenState extends State<PlacesScreen> {
     if (mounted) setState(() {});
   }
 
+  Future<void> _toggleVisible(Place place) async {
+    await PlacesService.instance.update(place.copyWith(visible: !place.visible));
+    if (mounted) setState(() {});
+  }
+
   Future<void> _deletePlace(Place place) async {
     await PlacesService.instance.remove(place.id);
     if (mounted) setState(() {});
@@ -205,15 +210,35 @@ class _PlacesScreenState extends State<PlacesScreen> {
         ? 'Nobody here'
         : here.map(_name).join(', ');
     return ListTile(
-      leading: Icon(Icons.place_outlined, color: c.mint),
+      leading: Icon(
+        place.visible ? Icons.place_outlined : Icons.visibility_off_outlined,
+        color: place.visible ? c.mint : c.text3,
+      ),
       title: Text(place.name),
-      subtitle: Text('${who} · within ${formatDistance(place.radiusMeters, rounded: true)}'),
+      subtitle: Text(
+          '${place.visible ? '' : 'Hidden on map · '}$who · within '
+          '${formatDistance(place.radiusMeters, rounded: true)}'),
       isThreeLine: false,
       onTap: () => _editPlace(place),
-      trailing: IconButton(
-        icon: const Icon(Icons.close, size: 18),
-        tooltip: 'Remove place',
-        onPressed: () => _deletePlace(place),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            icon: Icon(
+              place.visible
+                  ? Icons.visibility_outlined
+                  : Icons.visibility_off_outlined,
+              size: 20,
+            ),
+            tooltip: place.visible ? 'Hide on map' : 'Show on map',
+            onPressed: () => _toggleVisible(place),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 18),
+            tooltip: 'Remove place',
+            onPressed: () => _deletePlace(place),
+          ),
+        ],
       ),
     );
   }

@@ -6,6 +6,8 @@ class Place {
     required this.latitude,
     required this.longitude,
     required this.radiusMeters,
+    this.visible = true,
+    this.color,
   });
 
   final String id;
@@ -13,12 +15,16 @@ class Place {
   final double latitude;
   final double longitude;
   final double radiusMeters;
+  final bool visible;
+  final String? color;
 
   Place copyWith({
     String? name,
     double? latitude,
     double? longitude,
     double? radiusMeters,
+    bool? visible,
+    String? color,
   }) =>
       Place(
         id: id,
@@ -26,6 +32,8 @@ class Place {
         latitude: latitude ?? this.latitude,
         longitude: longitude ?? this.longitude,
         radiusMeters: radiusMeters ?? this.radiusMeters,
+        visible: visible ?? this.visible,
+        color: color ?? this.color,
       );
 
   Map<String, dynamic> toJson() => {
@@ -34,6 +42,8 @@ class Place {
         'latitude': latitude,
         'longitude': longitude,
         'radiusMeters': radiusMeters,
+        'visible': visible,
+        if (color != null) 'color': color,
       };
 
   factory Place.fromJson(Map<String, dynamic> j) => Place(
@@ -42,6 +52,8 @@ class Place {
         latitude: (j['latitude'] as num).toDouble(),
         longitude: (j['longitude'] as num).toDouble(),
         radiusMeters: (j['radiusMeters'] as num).toDouble(),
+        visible: j['visible'] as bool? ?? true,
+        color: j['color'] as String?,
       );
 }
 

@@ -9,8 +9,10 @@ import 'package:grid_frontend/screens/map/grid_map_style.dart';
 import 'package:grid_frontend/screens/battery_settings_screen.dart';
 import 'package:grid_frontend/screens/veilid_scan_screen.dart';
 import 'package:grid_frontend/services/veilid_service.dart';
+import 'package:grid_frontend/services/avatar_store.dart';
 import 'package:grid_frontend/services/contact_situation.dart';
 import 'package:grid_frontend/services/location_manager.dart';
+import 'package:grid_frontend/services/map_preferences.dart';
 import 'package:grid_frontend/services/places_service.dart';
 import 'package:grid_frontend/services/map_data_saver.dart';
 import 'package:grid_frontend/services/sharing_state_notifier.dart';
@@ -43,6 +45,8 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
   final List<Circle> _homeCircles = [];
   Circle? _meCircle;
   final Map<String, Circle> _contactCircles = {};
+  final Map<String, Symbol> _contactSymbols = {};
+  final Set<String> _avatarImages = {};
   final List<Circle> _placeCircles = [];
   StreamSubscription<Map<String, dynamic>>? _locSub;
   StreamSubscription<void>? _contactsSub;
@@ -87,6 +91,8 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     PlacesService.instance.addListener(_onPlacesChanged);
     MapDataSaver.instance.addListener(_onDataSaverChanged);
     MapDataSaver.instance.start();
+    AvatarStore.instance.addListener(_onAvatarChanged);
+    MapPreferences.instance.addListener(_onMapPrefsChanged);
     _contactsSub = VeilidService.instance.contactsChanged.listen((_) {
       if (!_active || !mounted) return;
       setState(() {});
@@ -106,6 +112,8 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     SharingStateNotifier.instance.removeListener(_onSharingChanged);
     PlacesService.instance.removeListener(_onPlacesChanged);
     MapDataSaver.instance.removeListener(_onDataSaverChanged);
+    AvatarStore.instance.removeListener(_onAvatarChanged);
+    MapPreferences.instance.removeListener(_onMapPrefsChanged);
     _locSub?.cancel();
     _contactsSub?.cancel();
     super.dispose();
@@ -180,6 +188,32 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
       final lng = (loc['lng'] as num?)?.toDouble();
       if (lat == null || lng == null || !isFiniteLatLng(lat, lng)) continue;
       seen.add(entry.key);
+      final avatar = AvatarStore.instance.avatarFor(entry.key);
+      if (avatar != null) {
+        final imageId =
+            'avatar_${entry.key.hashCode}_${avatar.hashCode}';
+        if (_avatarImages.add(imageId)) {
+          await controller.addImage(imageId, avatar);
+        }
+        final options = SymbolOptions(
+          geometry: LatLng(lat, lng),
+          iconImage: imageId,
+          iconSize: 0.55,
+          iconAnchor: 'center',
+        );
+        final existing = _contactSymbols[entry.key];
+        if (existing == null) {
+          _contactSymbols[entry.key] =
+              await controller.addSymbol(options, {'address': entry.key});
+        } else {
+          await controller.updateSymbol(existing, options);
+        }
+        final circle = _contactCircles.remove(entry.key);
+        if (circle != null) await controller.removeCircle(circle);
+        continue;
+      }
+      final symbol = _contactSymbols.remove(entry.key);
+      if (symbol != null) await controller.removeSymbol(symbol);
       final options = CircleOptions(
         geometry: LatLng(lat, lng),
         circleRadius: 7.0,
@@ -200,6 +234,10 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     for (final address in _contactCircles.keys.toList()) {
       if (seen.contains(address)) continue;
       await controller.removeCircle(_contactCircles.remove(address)!);
+    }
+    for (final address in _contactSymbols.keys.toList()) {
+      if (seen.contains(address)) continue;
+      await controller.removeSymbol(_contactSymbols.remove(address)!);
     }
   }
 
@@ -230,10 +268,13 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     if (lat == null || lng == null) return;
     final radiusMeters = (prefs.get('home_radius') as num?)?.toDouble() ?? 150;
 
-    final data = _areaCollection([
-      _areaFeature('home', lat, lng, radiusMeters),
-    ]);
-    if (!_homeAreaReady) {
+    final showRadii = MapPreferences.instance.showRadii;
+    final data = _areaCollection(showRadii
+        ? [
+            _areaFeature('home', lat, lng, radiusMeters, '#22c55e'),
+          ]
+        : []);
+    if (!_homeAreaReady && showRadii) {
       await controller.addGeoJsonSource('home_area', data);
       await controller.addFillLayer(
         'home_area',
@@ -247,7 +288,7 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
             lineColor: '#22c55e', lineWidth: 1.5, lineOpacity: 0.5),
       );
       _homeAreaReady = true;
-    } else {
+    } else if (_homeAreaReady) {
       await controller.setGeoJsonSource('home_area', data);
     }
 
@@ -265,6 +306,15 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     if (mounted) setState(() {});
   }
 
+  void _onAvatarChanged() {
+    _refreshMarkers();
+  }
+
+  void _onMapPrefsChanged() {
+    _refreshHome();
+    _refreshPlaces();
+  }
+
   void _onPlacesChanged() {
     if (!mounted || !_active) return;
     _refreshPlaces();
@@ -280,17 +330,29 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
       _placeCircles.clear();
     }
 
+    final prefs = MapPreferences.instance;
+    if (!prefs.showPlaces) {
+      if (_placesAreaReady) {
+        await controller.setGeoJsonSource('places_area', _emptyAreas());
+      }
+      return;
+    }
+
     final features = <Map<String, dynamic>>[];
     for (final place in PlacesService.instance.places) {
+      if (!place.visible) continue;
       if (!isFiniteLatLng(place.latitude, place.longitude)) continue;
-      features.add(_areaFeature(
-          place.id, place.latitude, place.longitude, place.radiusMeters));
-      // Keep a tappable centre marker; the radius itself is a native layer.
+      final color = place.color ?? prefs.placeColor;
+      if (prefs.showRadii) {
+        features.add(_areaFeature(place.id, place.latitude, place.longitude,
+            place.radiusMeters, color));
+      }
+      // Keep a tappable centre marker even when the radius is hidden.
       _placeCircles.add(await controller.addCircle(
         CircleOptions(
           geometry: LatLng(place.latitude, place.longitude),
           circleRadius: 6.0,
-          circleColor: '#14b8a6',
+          circleColor: color,
           circleOpacity: 0.9,
           circleStrokeWidth: 2.0,
           circleStrokeColor: '#ffffff',
@@ -305,13 +367,14 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
       await controller.addFillLayer(
         'places_area',
         'places_area_fill',
-        FillLayerProperties(fillColor: '#14b8a6', fillOpacity: 0.10),
+        FillLayerProperties(
+            fillColor: ['get', 'color'], fillOpacity: 0.10),
       );
       await controller.addLineLayer(
         'places_area',
         'places_area_line',
         LineLayerProperties(
-            lineColor: '#14b8a6', lineWidth: 1.5, lineOpacity: 0.5),
+            lineColor: ['get', 'color'], lineWidth: 1.5, lineOpacity: 0.5),
       );
       _placesAreaReady = true;
     } else {
@@ -327,7 +390,8 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
 
   /// GeoJSON polygon approximating a ground-radius circle.
   Map<String, dynamic> _areaFeature(
-      String id, double lat, double lng, double radiusMeters) {
+      String id, double lat, double lng, double radiusMeters,
+      [String? color]) {
     const earth = 6371000.0;
     const steps = 64;
     final latRad = lat * math.pi / 180;
@@ -341,7 +405,10 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     }
     return {
       'type': 'Feature',
-      'properties': {'id': id},
+      'properties': {
+        'id': id,
+        if (color != null) 'color': color,
+      },
       'geometry': {
         'type': 'Polygon',
         'coordinates': [ring],
@@ -364,6 +431,11 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
       backgroundColor: Colors.transparent,
       builder: (_) => PlaceInfoSheet(place: selected),
     );
+  }
+
+  void _onSymbolTapped(Symbol symbol) {
+    final address = symbol.data?['address'] as String?;
+    if (address != null) _openContact(address);
   }
 
   void _onCircleTapped(Circle circle) {
@@ -540,6 +612,7 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
             onMapCreated: (controller) {
               _controller = controller;
               controller.onCircleTapped.add(_onCircleTapped);
+              controller.onSymbolTapped.add(_onSymbolTapped);
             },
             onStyleLoadedCallback: () {
               if (!mounted) return;
@@ -549,6 +622,8 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
               // style.
               _meCircle = null;
               _contactCircles.clear();
+              _contactSymbols.clear();
+              _avatarImages.clear();
               _homeCircles.clear();
               _placeCircles.clear();
               _homeAreaReady = false;
@@ -635,6 +710,7 @@ class _MapContactSheetState extends State<_MapContactSheet> {
     return GridContactRow(
       name: _displayName(address),
       handle: address,
+      imageBytes: AvatarStore.instance.avatarFor(address),
       placeLine: situation?.placeLine,
       timeText: situation?.durationLabel,
       statusLabel: paused ? 'PAUSED' : 'LINKED',

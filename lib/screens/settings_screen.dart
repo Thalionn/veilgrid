@@ -1,14 +1,21 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:image/image.dart' as img;
+import 'package:image_picker/image_picker.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:grid_frontend/services/avatar_store.dart';
 import 'package:grid_frontend/services/location/home_geofence_service.dart';
 import 'package:grid_frontend/screens/battery_settings_screen.dart';
+import 'package:grid_frontend/screens/map_settings_screen.dart';
 import 'package:grid_frontend/services/location_manager.dart';
 import 'package:grid_frontend/services/sharing_state_notifier.dart';
 import 'package:grid_frontend/services/theme_controller.dart';
 import 'package:grid_frontend/services/units_controller.dart';
 import 'package:grid_frontend/services/update_service.dart';
 import 'package:grid_frontend/services/veilid_service.dart';
+import 'package:grid_frontend/widgets/grid/grid_avatar.dart';
 import 'package:grid_frontend/widgets/grid/grid_mono.dart';
 import 'package:grid_frontend/widgets/grid/update_sheet.dart';
 
@@ -40,6 +47,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     SharingStateNotifier.instance.addListener(_onChanged);
     UnitsController.instance.addListener(_onChanged);
     ThemeController.instance.addListener(_onChanged);
+    AvatarStore.instance.addListener(_onChanged);
   }
 
   @override
@@ -47,6 +55,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     SharingStateNotifier.instance.removeListener(_onChanged);
     UnitsController.instance.removeListener(_onChanged);
     ThemeController.instance.removeListener(_onChanged);
+    AvatarStore.instance.removeListener(_onChanged);
     super.dispose();
   }
 
@@ -249,6 +258,65 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _pickAvatar() async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final picked = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 800,
+        maxHeight: 800,
+        imageQuality: 90,
+      );
+      if (picked == null) return;
+      final png = _circularAvatar(await picked.readAsBytes());
+      await AvatarStore.instance.setMine(png);
+      await VeilidService.instance.sendProfile();
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Profile photo updated')),
+      );
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not use that photo: $e')),
+      );
+    }
+  }
+
+  Future<void> _removeAvatar() async {
+    await AvatarStore.instance.setMine(null);
+    await VeilidService.instance.sendProfile();
+  }
+
+  /// Crop to a square, mask to a circle, and encode small enough to fit a
+  /// Veilid app message. PNG keeps the transparent corners for map symbols.
+  static Uint8List _circularAvatar(Uint8List input) {
+    final decoded = img.bakeOrientation(img.decodeImage(input)!);
+    for (final size in [128, 112, 96, 80]) {
+      final square = img.copyResizeCropSquare(decoded, size: size);
+      final out = img.Image(width: size, height: size, numChannels: 4);
+      final r = (size - 1) / 2;
+      final c = r;
+      for (var y = 0; y < size; y++) {
+        for (var x = 0; x < size; x++) {
+          final dx = x - c;
+          final dy = y - c;
+          final d2 = dx * dx + dy * dy;
+          if (d2 <= r * r) {
+            if (d2 >= (r - 2.5) * (r - 2.5)) {
+              out.setPixelRgba(x, y, 255, 255, 255, 255);
+            } else {
+              out.setPixel(x, y, square.getPixel(x, y));
+            }
+          } else {
+            out.setPixelRgba(x, y, 0, 0, 0, 0);
+          }
+        }
+      }
+      final png = img.encodePng(out, level: 9);
+      if (png.length <= AvatarStore.maxBytes) return png;
+    }
+    throw StateError('photo is too detailed to compress');
+  }
+
   @override
   Widget build(BuildContext context) {
     final incognito = SharingStateNotifier.instance.userIncognito;
@@ -262,11 +330,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           _sectionLabel(context, 'Profile'),
           ListTile(
-            leading: const CircleAvatar(child: Icon(Icons.person_outline)),
+            leading: GridAvatar(
+              name: _displayName ?? 'You',
+              size: 40,
+              imageBytes: AvatarStore.instance.mine,
+            ),
             title: Text(_displayName ?? 'No name set'),
             subtitle: const Text('Shown to your contacts'),
             trailing: const Icon(Icons.edit_outlined, size: 20),
             onTap: _editName,
+          ),
+          ListTile(
+            leading: const Icon(Icons.photo_camera_outlined),
+            title: const Text('Profile photo'),
+            subtitle: Text(AvatarStore.instance.mine == null
+                ? 'Choose a picture to show on your contacts\' maps'
+                : 'Shown on your contacts\' maps'),
+            trailing: AvatarStore.instance.mine == null
+                ? const Icon(Icons.add_photo_alternate_outlined, size: 20)
+                : IconButton(
+                    icon: const Icon(Icons.delete_outline, size: 20),
+                    tooltip: 'Remove photo',
+                    onPressed: _removeAvatar,
+                  ),
+            onTap: _pickAvatar,
           ),
 
           const SizedBox(height: 12),
@@ -291,6 +378,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 builder: (_) => const BatterySettingsScreen(),
               ));
             },
+          ),
+
+          const SizedBox(height: 12),
+          _sectionLabel(context, 'Map'),
+          ListTile(
+            leading: const Icon(Icons.layers_outlined),
+            title: const Text('Map display'),
+            subtitle: const Text(
+                'Radius circles, saved places and place colors'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const MapSettingsScreen()),
+            ),
           ),
 
           const SizedBox(height: 12),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:grid_frontend/models/place.dart';
 import 'package:grid_frontend/services/location_manager.dart';
+import 'package:grid_frontend/services/map_preferences.dart';
 import 'package:grid_frontend/services/units_controller.dart';
 
 /// Rename a saved place, resize its radius, or move it to the current fix.
@@ -12,6 +13,8 @@ Future<Place?> showEditPlaceDialog(BuildContext context, Place place) async {
   double latitude = place.latitude;
   double longitude = place.longitude;
   bool moved = false;
+  bool visible = place.visible;
+  String? color = place.color;
 
   final result = await showDialog<Place>(
     context: context,
@@ -53,6 +56,50 @@ Future<Place?> showEditPlaceDialog(BuildContext context, Place place) async {
                     Text(formatDistance(radius)),
                   ],
                 ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Show on map'),
+                  value: visible,
+                  onChanged: (v) => setDialogState(() => visible = v),
+                ),
+                const SizedBox(height: 4),
+                const Text('Color'),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    for (final c in MapPreferences.placeColors)
+                      InkWell(
+                        onTap: () => setDialogState(() => color = c),
+                        borderRadius: BorderRadius.circular(18),
+                        child: Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: Color(
+                                int.parse(c.substring(1), radix: 16) | 0xFF000000),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: (color ??
+                                          MapPreferences.instance.placeColor) ==
+                                      c
+                                  ? Theme.of(context).colorScheme.onSurface
+                                  : Colors.transparent,
+                              width: 3,
+                            ),
+                          ),
+                          child: (color ??
+                                      MapPreferences.instance.placeColor) ==
+                                  c
+                              ? const Icon(Icons.check,
+                                  size: 15, color: Colors.white)
+                              : null,
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 10),
                 TextButton.icon(
                   onPressed: me == null
                       ? null
@@ -85,6 +132,8 @@ Future<Place?> showEditPlaceDialog(BuildContext context, Place place) async {
                           latitude: latitude,
                           longitude: longitude,
                           radiusMeters: radius.roundToDouble(),
+                          visible: visible,
+                          color: color,
                         ),
                       ),
               child: const Text('Save'),

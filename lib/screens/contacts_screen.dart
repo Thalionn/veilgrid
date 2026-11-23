@@ -1,8 +1,14 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:grid_frontend/services/avatar_store.dart';
 import 'package:grid_frontend/services/contact_situation.dart';
+import 'package:grid_frontend/services/invite_link.dart';
 import 'package:grid_frontend/services/places_service.dart';
 import 'package:grid_frontend/services/veilid_service.dart';
 import 'package:grid_frontend/screens/veilid_scan_screen.dart';
@@ -25,6 +31,8 @@ class ContactsScreen extends StatefulWidget {
 
 class _ContactsScreenState extends State<ContactsScreen> {
   String? _address;
+  bool _twoWay = false;
+  String? _inviteToken;
   late final StreamSubscription<void> _contactsSub;
   StreamSubscription<Map<String, dynamic>>? _locationSub;
   DateTime _lastLiveRefresh = DateTime.fromMillisecondsSinceEpoch(0);
@@ -45,6 +53,8 @@ class _ContactsScreenState extends State<ContactsScreen> {
   void initState() {
     super.initState();
     _loadAddress();
+    _loadInviteSettings();
+    AvatarStore.instance.addListener(_onAvatarChanged);
     _contactsSub = VeilidService.instance.contactsChanged.listen((_) {
       if (!_active || !mounted) return;
       setState(() {});
@@ -64,11 +74,16 @@ class _ContactsScreenState extends State<ContactsScreen> {
     if (mounted) setState(() {});
   }
 
+  void _onAvatarChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
     _contactsSub.cancel();
     _locationSub?.cancel();
     PlacesService.instance.removeListener(_onPlacesChanged);
+    AvatarStore.instance.removeListener(_onAvatarChanged);
     super.dispose();
   }
 
@@ -78,6 +93,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
     return GridContactRow(
       name: _displayName(address),
       handle: address,
+      imageBytes: AvatarStore.instance.avatarFor(address),
       placeLine: situation?.placeLine,
       timeText: situation?.durationLabel,
       statusLabel: paused ? 'PAUSED' : 'LINKED',
@@ -98,6 +114,59 @@ class _ContactsScreenState extends State<ContactsScreen> {
       MaterialPageRoute(builder: (_) => const VeilidScanScreen()),
     );
     if (mounted) setState(() {});
+  }
+
+  static const _twoWayPref = 'invite_two_way';
+  static const _tokenPref = 'invite_token';
+
+  Future<void> _loadInviteSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    final twoWay = prefs.getBool(_twoWayPref) ?? false;
+    var token = prefs.getString(_tokenPref);
+    if (twoWay && (token == null || token.isEmpty)) {
+      token = _newToken();
+      await prefs.setString(_tokenPref, token);
+    }
+    await VeilidService.instance.setLinkBackToken(twoWay ? token : null);
+    if (!mounted) return;
+    setState(() {
+      _twoWay = twoWay;
+      _inviteToken = token;
+    });
+  }
+
+  static String _newToken() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(18, (_) => random.nextInt(256));
+    return base64UrlEncode(bytes).replaceAll('=', '');
+  }
+
+  Future<void> _setTwoWay(bool value) async {
+    var token = _inviteToken;
+    if (value && (token == null || token.isEmpty)) token = _newToken();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_twoWayPref, value);
+    if (token != null) await prefs.setString(_tokenPref, token);
+    await VeilidService.instance.setLinkBackToken(value ? token : null);
+    if (!mounted) return;
+    setState(() {
+      _twoWay = value;
+      _inviteToken = token;
+    });
+  }
+
+  Future<void> _shareInvite() async {
+    final address = _address;
+    if (address == null) return;
+    final link = buildInviteLink(
+      address,
+      twoWay: _twoWay,
+      token: _inviteToken,
+    );
+    await SharePlus.instance.share(ShareParams(
+      text: 'Add me on VeilGrid: $link',
+      subject: 'VeilGrid invite',
+    ));
   }
 
   Future<void> _copyAddress() async {
@@ -137,13 +206,6 @@ class _ContactsScreenState extends State<ContactsScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Contacts'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.qr_code_scanner),
-            tooltip: 'Add contact',
-            onPressed: _openScan,
-          ),
-        ],
       ),
       body: ListView(
         padding: const EdgeInsets.only(bottom: 24),
@@ -175,13 +237,42 @@ class _ContactsScreenState extends State<ContactsScreen> {
                           textAlign: TextAlign.center,
                         ),
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.copy_rounded, size: 18),
-                        tooltip: 'Copy address',
-                        onPressed: _copyAddress,
+                    ],
+                  ),
+                const SizedBox(height: 12),
+                if (_address != null)
+                  Row(
+                    children: [
+                      Expanded(
+                        child: GridButton(
+                          label: 'Copy code',
+                          icon: Icons.copy_rounded,
+                          style: GridButtonStyle.secondary,
+                          height: 46,
+                          onPressed: _copyAddress,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: GridButton(
+                          label: 'Share',
+                          icon: Icons.ios_share,
+                          style: GridButtonStyle.primary,
+                          height: 46,
+                          onPressed: _shareInvite,
+                        ),
                       ),
                     ],
                   ),
+                const SizedBox(height: 4),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Two-way link'),
+                  subtitle: const Text(
+                      'After they accept, they are linked back to you automatically'),
+                  value: _twoWay,
+                  onChanged: _setTwoWay,
+                ),
               ],
             ),
           ),

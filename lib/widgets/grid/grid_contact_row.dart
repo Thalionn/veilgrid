@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -21,6 +23,7 @@ class GridContactRow extends StatelessWidget {
     this.statusLabel,
     this.avatarStatus = GridAvatarStatus.idle,
     this.imageUrl,
+    this.imageBytes,
     this.userId,
     this.highlighted = false,
     this.onTap,
@@ -37,6 +40,7 @@ class GridContactRow extends StatelessWidget {
   final String? statusLabel;
   final GridAvatarStatus avatarStatus;
   final String? imageUrl;
+  final Uint8List? imageBytes;
   final String? userId;
   final bool highlighted;
   final VoidCallback? onTap;
@@ -69,6 +73,7 @@ class GridContactRow extends StatelessWidget {
                 size: 44,
                 status: avatarStatus,
                 imageUrl: imageUrl,
+                imageBytes: imageBytes,
                 userId: userId,
               ),
               const SizedBox(width: 12),

@@ -17,6 +17,8 @@ import 'package:grid_frontend/services/map_data_saver.dart';
 import 'package:grid_frontend/services/places_service.dart';
 import 'package:grid_frontend/services/place_alert_service.dart';
 import 'package:grid_frontend/services/activity_store.dart';
+import 'package:grid_frontend/services/avatar_store.dart';
+import 'package:grid_frontend/services/map_preferences.dart';
 import 'package:grid_frontend/screens/home_screen.dart';
 
 Future<void> main() async {
@@ -31,6 +33,8 @@ Future<void> main() async {
     LocationManager.instance.initialize(),
     ThemeController.instance.load(),
     UnitsController.instance.load(),
+    AvatarStore.instance.load(),
+    MapPreferences.instance.load(),
   ]);
   runApp(const GridApp());
   _startLocation();
@@ -89,6 +93,9 @@ Future<void> _initPublish() async {
   for (var attempt = 0; attempt < 5; attempt++) {
     try {
       await VeilidService.instance.publishMyRoute();
+      // Avatar/name may have changed while offline; refresh contacts once the
+      // route is live.
+      await VeilidService.instance.sendProfile();
       return;
     } catch (e) {
       debugPrint('[Veilid] publish attempt ${attempt + 1} failed: $e');

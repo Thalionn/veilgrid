@@ -3,12 +3,14 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:veilid/veilid.dart';
 import 'package:grid_frontend/models/place.dart';
 import 'package:grid_frontend/utilities/lat_lng_validation.dart';
+import 'avatar_store.dart';
 
 /// Veilid integration for the P2P app.
 ///
@@ -22,6 +24,12 @@ class VeilidService {
   static final VeilidService instance = VeilidService._();
 
   bool _started = false;
+
+  /// Secret embedded in the current two-way invite link. A link-back request
+  /// is accepted only while it matches.
+  String? _linkBackToken;
+  bool _linkTokenLoaded = false;
+  static const String _linkTokenPref = 'link_back_token';
   bool _identityStoreInsecure = false;
   KeyPair? _keyPair;
   RecordKey? _myRecordKey;
@@ -195,6 +203,25 @@ class VeilidService {
     // current routes from the DHT. Tolerant: offline contacts stay listed but
     // unresolved until the next send.
     await _restoreContacts();
+    await _loadLinkBackToken();
+  }
+
+  Future<void> _loadLinkBackToken() async {
+    if (_linkTokenLoaded) return;
+    _linkTokenLoaded = true;
+    final prefs = await SharedPreferences.getInstance();
+    _linkBackToken = prefs.getString(_linkTokenPref);
+  }
+
+  Future<void> setLinkBackToken(String? token) async {
+    _linkTokenLoaded = true;
+    _linkBackToken = token;
+    final prefs = await SharedPreferences.getInstance();
+    if (token == null || token.isEmpty) {
+      await prefs.remove(_linkTokenPref);
+    } else {
+      await prefs.setString(_linkTokenPref, token);
+    }
   }
 
   Future<void> _restoreContacts() async {
@@ -310,6 +337,14 @@ class VeilidService {
       payload = decoded;
     } catch (_) {
       _reject('malformed payload');
+      return;
+    }
+    if (payload['type'] == 'profile') {
+      await _handleProfile(payload);
+      return;
+    }
+    if (payload['type'] == 'link_request') {
+      await _handleLinkRequest(payload);
       return;
     }
     if (payload['type'] != 'location') return;
@@ -868,6 +903,7 @@ class VeilidService {
       await _persistContacts();
     }
     _contactsChangedController.add(null);
+    unawaited(sendProfile(to: address));
   }
 
   Future<String?> _readContactName(String address) async {
@@ -885,6 +921,222 @@ class VeilidService {
       await prefs.remove(_contactNamesPrefKey);
     } else {
       await prefs.setString(_contactNamesPrefKey, jsonEncode(_contactNames));
+    }
+  }
+
+  Future<String> _signText(String canonical) async {
+    final keyPair = await _keyPairOrCreate();
+    final crypto = await _crypto(keyPair.key.kind);
+    final signature = await crypto.signWithKeyPair(
+      keyPair,
+      Uint8List.fromList(utf8.encode(canonical)),
+    );
+    return signature.toString();
+  }
+
+  /// Sends my current name/avatar to contacts (or one contact).
+  Future<void> sendProfile({String? to}) async {
+    await _ensureStarted();
+    final context = _routingContext;
+    if (context == null) return;
+    final from = await myAddress();
+    final name = await myName();
+    final avatar = AvatarStore.instance.mine;
+    final avatarB64 = avatar == null ? null : base64Encode(avatar);
+    final avatarHash = avatar == null
+        ? ''
+        : sha256.convert(avatar).toString();
+    if (name == null && avatarB64 == null) return;
+    final ts = DateTime.now().toUtc().toIso8601String();
+    final nonce = _newNonce();
+    final canonical = [
+      'grid-profile-v1',
+      from,
+      ts,
+      nonce,
+      name ?? '',
+      avatarHash,
+    ].join('\n');
+    final signature = await _signText(canonical);
+    final payload = jsonEncode({
+      'type': 'profile',
+      'v': 1,
+      'from': from,
+      'ts': ts,
+      'nonce': nonce,
+      if (name != null) 'name': name,
+      if (avatarB64 != null) 'avatar': avatarB64,
+      'sig': signature,
+    });
+    final bytes = Uint8List.fromList(utf8.encode(payload));
+    final targets = to != null
+        ? <String>[to]
+        : List<String>.from(_contactAddresses);
+    for (final address in targets) {
+      if (!_contactAddresses.contains(address)) continue;
+      try {
+        final routeId = await _routeFor(address);
+        await context.appMessage(TargetRouteId(routeId: routeId), bytes);
+      } catch (e) {
+        debugPrint('[Veilid] profile send failed for ${_maskAddress(address)}: $e');
+      }
+    }
+  }
+
+  /// Sends a signed "link me back" request to the inviter.
+  Future<void> sendLinkBack(String inviter, String token) async {
+    if (token.isEmpty) return;
+    await _ensureStarted();
+    final context = _routingContext;
+    if (context == null) return;
+    final from = await myAddress();
+    if (from == inviter) return;
+    final name = await myName();
+    final avatar = AvatarStore.instance.mine;
+    final avatarB64 = avatar == null ? null : base64Encode(avatar);
+    final avatarHash = avatar == null
+        ? ''
+        : sha256.convert(avatar).toString();
+    final ts = DateTime.now().toUtc().toIso8601String();
+    final nonce = _newNonce();
+    final canonical = [
+      'grid-link-v1',
+      from,
+      ts,
+      nonce,
+      token,
+      name ?? '',
+      avatarHash,
+    ].join('\n');
+    final signature = await _signText(canonical);
+    final payload = jsonEncode({
+      'type': 'link_request',
+      'v': 1,
+      'from': from,
+      'ts': ts,
+      'nonce': nonce,
+      'token': token,
+      if (name != null) 'name': name,
+      if (avatarB64 != null) 'avatar': avatarB64,
+      'sig': signature,
+    });
+    try {
+      final routeId = await _routeFor(inviter);
+      await context.appMessage(
+        TargetRouteId(routeId: routeId),
+        Uint8List.fromList(utf8.encode(payload)),
+      );
+    } catch (e) {
+      debugPrint('[Veilid] link-back send failed: $e');
+    }
+  }
+
+  Future<void> _handleProfile(Map<String, dynamic> payload) async {
+    try {
+      if (payload['v'] != 1) return;
+      final from = payload['from'];
+      if (from is! String || !_contactAddresses.contains(from)) return;
+      final tsRaw = payload['ts'];
+      final nonce = payload['nonce'];
+      final signature = payload['sig'];
+      if (tsRaw is! String || nonce is! String || signature is! String) return;
+      final ts = DateTime.tryParse(tsRaw);
+      if (ts == null ||
+          DateTime.now().toUtc().difference(ts.toUtc()).abs() > _maxClockSkew) {
+        return;
+      }
+      if (_seenNonces.contains(nonce)) return;
+      final avatarB64 = payload['avatar'] is String ? payload['avatar'] as String : null;
+      Uint8List? avatar;
+      if (avatarB64 != null && avatarB64.isNotEmpty) {
+        try {
+          avatar = base64Decode(avatarB64);
+        } catch (_) {
+          return;
+        }
+        if (avatar.length > AvatarStore.maxBytes) return;
+      }
+      final name = payload['name'] is String ? payload['name'] as String : '';
+      final avatarHash = avatar == null ? '' : sha256.convert(avatar).toString();
+      final canonical = [
+        'grid-profile-v1',
+        from,
+        tsRaw,
+        nonce,
+        name,
+        avatarHash,
+      ].join('\n');
+      final key = await _publicKeyFor(from);
+      if (key == null ||
+          !await _verifySignature(
+              key, Uint8List.fromList(utf8.encode(canonical)), signature)) {
+        return;
+      }
+      _seenNonces.add(nonce);
+      if (_seenNonces.length > 512) _seenNonces.remove(_seenNonces.first);
+      if (avatar != null) {
+        await AvatarStore.instance.setContactAvatar(from, avatar);
+      }
+    } catch (e) {
+      debugPrint('[Veilid] profile handling failed: $e');
+    }
+  }
+
+  Future<void> _handleLinkRequest(Map<String, dynamic> payload) async {
+    try {
+      await _loadLinkBackToken();
+      final token = _linkBackToken;
+      if (token == null || token.isEmpty) return;
+      if (payload['v'] != 1) return;
+      final from = payload['from'];
+      if (from is! String || from.isEmpty || from == await myAddress()) return;
+      if (payload['token'] != token) return;
+      final tsRaw = payload['ts'];
+      final nonce = payload['nonce'];
+      final signature = payload['sig'];
+      if (tsRaw is! String || nonce is! String || signature is! String) return;
+      final ts = DateTime.tryParse(tsRaw);
+      if (ts == null ||
+          DateTime.now().toUtc().difference(ts.toUtc()).abs() > _maxClockSkew) {
+        return;
+      }
+      if (_seenNonces.contains(nonce)) return;
+      final avatarB64 = payload['avatar'] is String ? payload['avatar'] as String : null;
+      Uint8List? avatar;
+      if (avatarB64 != null && avatarB64.isNotEmpty) {
+        try {
+          avatar = base64Decode(avatarB64);
+        } catch (_) {
+          return;
+        }
+        if (avatar.length > AvatarStore.maxBytes) return;
+      }
+      final name = payload['name'] is String ? payload['name'] as String : '';
+      final avatarHash = avatar == null ? '' : sha256.convert(avatar).toString();
+      final canonical = [
+        'grid-link-v1',
+        from,
+        tsRaw,
+        nonce,
+        token,
+        name,
+        avatarHash,
+      ].join('\n');
+      final key = await _publicKeyFor(from);
+      if (key == null ||
+          !await _verifySignature(
+              key, Uint8List.fromList(utf8.encode(canonical)), signature)) {
+        return;
+      }
+      _seenNonces.add(nonce);
+      if (_seenNonces.length > 512) _seenNonces.remove(_seenNonces.first);
+      await addContact(from);
+      if (avatar != null) {
+        await AvatarStore.instance.setContactAvatar(from, avatar);
+      }
+      unawaited(sendProfile(to: from));
+    } catch (e) {
+      debugPrint('[Veilid] link-back handling failed: $e');
     }
   }
 
@@ -1007,6 +1259,7 @@ class VeilidService {
     _lastAcceptedAt.remove(address);
     _keyLookupAttemptedAt.remove(address);
 
+    await AvatarStore.instance.removeContactAvatar(address);
     await _persistContacts();
     await _persistPaused();
     await _persistContactNames();

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 
 import '../../styles/grid_colors.dart';
@@ -31,6 +33,7 @@ class GridAvatar extends StatelessWidget {
     required this.name,
     this.size = 44,
     this.imageUrl,
+    this.imageBytes,
     this.userId,
     this.status = GridAvatarStatus.none,
     this.selfStatus,
@@ -41,6 +44,9 @@ class GridAvatar extends StatelessWidget {
   final String name;
   final double size;
   final String? imageUrl;
+
+  /// Locally cached profile photo bytes (contacts synced over Veilid).
+  final Uint8List? imageBytes;
 
   /// When provided, the avatar pulls the user's image from `AvatarBloc`
   /// (same source the map markers use) and falls back to the deterministic
@@ -109,17 +115,27 @@ class GridAvatar extends StatelessWidget {
         ],
       ),
       alignment: Alignment.center,
-      child: imageUrl != null
+      child: imageBytes != null
           ? ClipOval(
-              child: Image.network(
-                imageUrl!,
+              child: Image.memory(
+                imageBytes!,
                 width: size,
                 height: size,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => _fallbackInitial(),
+                gaplessPlayback: true,
               ),
             )
-          : _fallbackInitial(),
+          : imageUrl != null
+              ? ClipOval(
+                  child: Image.network(
+                    imageUrl!,
+                    width: size,
+                    height: size,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => _fallbackInitial(),
+                  ),
+                )
+              : _fallbackInitial(),
     );
 
     Widget body = inner;

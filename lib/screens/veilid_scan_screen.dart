@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:qr_code_scanner_plus/qr_code_scanner_plus.dart';
+import 'package:grid_frontend/services/invite_link.dart';
 import 'package:grid_frontend/services/veilid_service.dart';
 
 /// Adds a contact by scanning their QR (a Veilid private-route blob) or by
@@ -47,7 +48,14 @@ class _VeilidScanScreenState extends State<VeilidScanScreen> {
       _status = 'Importing contact…';
     });
     try {
-      await VeilidService.instance.addContact(code.trim());
+      final invite = parseInvite(code);
+      if (invite == null || invite.code.isEmpty) {
+        throw const FormatException('Not a VeilGrid contact code');
+      }
+      await VeilidService.instance.addContact(invite.code);
+      if (invite.twoWay && invite.token != null && invite.token!.isNotEmpty) {
+        await VeilidService.instance.sendLinkBack(invite.code, invite.token!);
+      }
       if (!mounted) return;
       setState(() => _status = 'Contact added ✓');
       await Future.delayed(const Duration(milliseconds: 900));
