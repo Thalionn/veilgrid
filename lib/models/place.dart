@@ -8,6 +8,7 @@ class Place {
     required this.radiusMeters,
     this.visible = true,
     this.color,
+    this.icon,
   });
 
   final String id;
@@ -17,6 +18,7 @@ class Place {
   final double radiusMeters;
   final bool visible;
   final String? color;
+  final String? icon;
 
   Place copyWith({
     String? name,
@@ -25,6 +27,7 @@ class Place {
     double? radiusMeters,
     bool? visible,
     String? color,
+    String? icon,
   }) =>
       Place(
         id: id,
@@ -34,6 +37,7 @@ class Place {
         radiusMeters: radiusMeters ?? this.radiusMeters,
         visible: visible ?? this.visible,
         color: color ?? this.color,
+        icon: icon ?? this.icon,
       );
 
   Map<String, dynamic> toJson() => {
@@ -44,6 +48,7 @@ class Place {
         'radiusMeters': radiusMeters,
         'visible': visible,
         if (color != null) 'color': color,
+        if (icon != null) 'icon': icon,
       };
 
   factory Place.fromJson(Map<String, dynamic> j) => Place(
@@ -54,6 +59,7 @@ class Place {
         radiusMeters: (j['radiusMeters'] as num).toDouble(),
         visible: j['visible'] as bool? ?? true,
         color: j['color'] as String?,
+        icon: j['icon'] as String?,
       );
 }
 

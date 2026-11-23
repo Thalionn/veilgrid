@@ -5,6 +5,7 @@ import 'package:grid_frontend/models/place.dart';
 import 'package:grid_frontend/services/location_manager.dart';
 import 'package:grid_frontend/services/place_presence.dart';
 import 'package:grid_frontend/services/places_service.dart';
+import 'package:grid_frontend/services/place_icons.dart';
 import 'package:grid_frontend/services/units_controller.dart';
 import 'package:grid_frontend/services/veilid_service.dart';
 import 'package:grid_frontend/styles/grid_colors.dart';
@@ -83,7 +84,8 @@ class _PlacesScreenState extends State<PlacesScreen> {
   Future<void> _confirmPlace(PlaceSelection selection) async {
     final controller = TextEditingController(text: selection.suggestedName ?? '');
     double radius = 150;
-    final result = await showDialog<(String, double)>(
+    String icon = 'place';
+    final result = await showDialog<(String, double, String)>( 
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
@@ -99,7 +101,17 @@ class _PlacesScreenState extends State<PlacesScreen> {
                   hintText: 'Home, Work, Gym…',
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 8),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Icon'),
+              ),
+              const SizedBox(height: 6),
+              PlaceIconPicker(
+                selected: icon,
+                onSelected: (id) => setDialogState(() => icon = id),
+              ),
+              const SizedBox(height: 12),
               Row(
                 children: [
                   const Text('Radius'),
@@ -125,7 +137,7 @@ class _PlacesScreenState extends State<PlacesScreen> {
             ),
             FilledButton(
               onPressed: () =>
-                  Navigator.of(context).pop((controller.text, radius)),
+                  Navigator.of(context).pop((controller.text, radius, icon)),
               child: const Text('Save'),
             ),
           ],
@@ -133,7 +145,7 @@ class _PlacesScreenState extends State<PlacesScreen> {
       ),
     );
     if (result == null) return;
-    final (name, r) = result;
+    final (name, r, placeIcon) = result;
     if (name.trim().isEmpty) return;
     await PlacesService.instance.add(Place(
       id: DateTime.now().microsecondsSinceEpoch.toString(),
@@ -141,6 +153,7 @@ class _PlacesScreenState extends State<PlacesScreen> {
       latitude: selection.latitude,
       longitude: selection.longitude,
       radiusMeters: r,
+      icon: placeIcon,
     ));
     if (mounted) setState(() {});
   }
@@ -211,7 +224,7 @@ class _PlacesScreenState extends State<PlacesScreen> {
         : here.map(_name).join(', ');
     return ListTile(
       leading: Icon(
-        place.visible ? Icons.place_outlined : Icons.visibility_off_outlined,
+        place.visible ? placeIconFor(place.icon).icon : Icons.visibility_off_outlined,
         color: place.visible ? c.mint : c.text3,
       ),
       title: Text(place.name),

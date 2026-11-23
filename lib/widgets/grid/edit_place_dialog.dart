@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:grid_frontend/models/place.dart';
 import 'package:grid_frontend/services/location_manager.dart';
 import 'package:grid_frontend/services/map_preferences.dart';
+import 'package:grid_frontend/services/place_icons.dart';
 import 'package:grid_frontend/services/units_controller.dart';
 import 'package:grid_frontend/widgets/grid/place_search_sheet.dart';
 
@@ -17,6 +18,7 @@ Future<Place?> showEditPlaceDialog(BuildContext context, Place place) async {
   bool visible = place.visible;
   String? color = place.color;
   String? selectionNote;
+  String icon = place.icon ?? 'place';
 
   final result = await showDialog<Place>(
     context: context,
@@ -39,6 +41,16 @@ Future<Place?> showEditPlaceDialog(BuildContext context, Place place) async {
                     hintText: 'Home, Work, Gym…',
                   ),
                   onChanged: (_) => setDialogState(() {}),
+                ),
+                const SizedBox(height: 8),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('Icon'),
+                ),
+                const SizedBox(height: 6),
+                PlaceIconPicker(
+                  selected: icon,
+                  onSelected: (id) => setDialogState(() => icon = id),
                 ),
                 const SizedBox(height: 12),
                 Row(
@@ -176,6 +188,7 @@ Future<Place?> showEditPlaceDialog(BuildContext context, Place place) async {
                           radiusMeters: radius.roundToDouble(),
                           visible: visible,
                           color: color,
+                          icon: icon,
                         ),
                       ),
               child: const Text('Save'),
