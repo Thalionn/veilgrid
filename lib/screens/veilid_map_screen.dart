@@ -44,7 +44,7 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
   bool _styleLoaded = false;
 
   final List<Circle> _homeCircles = [];
-  Circle? _meCircle;
+  Symbol? _meSymbol;
   final Map<String, Circle> _contactCircles = {};
   final Map<String, Symbol> _contactSymbols = {};
   final Set<String> _avatarImages = {};
@@ -166,25 +166,42 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
 
   Future<void> _refreshMarkersNow(MapLibreMapController controller) async {
 
-    // Your position (blue). Updated in place instead of removed and re-added.
+    // Your own position uses the same avatar/initials marker as contacts.
     final me = LocationManager.instance.currentLatLng;
     if (me != null) {
-      final options = CircleOptions(
-        geometry: LatLng(me.latitude, me.longitude),
-        circleRadius: 7.0,
-        circleColor: '#2563eb',
-        circleOpacity: 1.0,
-        circleStrokeWidth: 2.0,
-        circleStrokeColor: '#ffffff',
-      );
-      if (_meCircle == null) {
-        _meCircle = await controller.addCircle(options);
+      final myName = await VeilidService.instance.myName();
+      final hasName = myName != null && myName.trim().isNotEmpty;
+      final label = hasName ? initialsFor(myName) : 'YOU';
+      final photo = AvatarStore.instance.mine;
+      final String imageId;
+      if (photo != null) {
+        imageId = 'me_avatar_${photo.hashCode}';
+        if (_avatarImages.add(imageId)) {
+          await controller.addImage(imageId, photo);
+        }
       } else {
-        await controller.updateCircle(_meCircle!, options);
+        imageId = 'me_badge_${label}_${avatarColorFor(myName ?? 'You').value}';
+        if (_avatarImages.add(imageId)) {
+          await controller.addImage(
+            imageId,
+            await renderInitialsBadge(label, name: myName ?? 'You'),
+          );
+        }
       }
-    } else if (_meCircle != null) {
-      await controller.removeCircle(_meCircle!);
-      _meCircle = null;
+      final options = SymbolOptions(
+        geometry: LatLng(me.latitude, me.longitude),
+        iconImage: imageId,
+        iconSize: 0.85,
+        iconAnchor: 'center',
+      );
+      if (_meSymbol == null) {
+        _meSymbol = await controller.addSymbol(options);
+      } else {
+        await controller.updateSymbol(_meSymbol!, options);
+      }
+    } else if (_meSymbol != null) {
+      await controller.removeSymbol(_meSymbol!);
+      _meSymbol = null;
     }
 
     // Contact positions (amber), tagged with their address for tap handling.
@@ -621,7 +638,7 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
               // A style reload invalidates every annotation handle; drop the
               // stale handles instead of trying to remove them from the new
               // style.
-              _meCircle = null;
+              _meSymbol = null;
               _contactCircles.clear();
               _contactSymbols.clear();
               _avatarImages.clear();
