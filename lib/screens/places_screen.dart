@@ -219,9 +219,8 @@ class _PlacesScreenState extends State<PlacesScreen> {
   Widget _placeTile(BuildContext context, Place place) {
     final c = context.gridColors;
     final here = _whoIsHere(place);
-    final who = here.isEmpty
-        ? 'Nobody here'
-        : here.map(_name).join(', ');
+    final labels = [if (selfAtPlace(place)) 'You', ...here.map(_name)];
+    final who = labels.isEmpty ? 'Nobody here' : labels.join(', ');
     return ListTile(
       leading: Icon(
         place.visible ? placeIconFor(place.icon).icon : Icons.visibility_off_outlined,

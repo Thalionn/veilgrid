@@ -52,6 +52,7 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
   final Set<String> _avatarImages = {};
   final Map<String, int> _avatarWidths = {};
   final Map<String, String> _groupedAddresses = {};
+  int? _clusterSignature;
   final Map<String, Symbol> _placeSymbols = {};
   final Set<String> _placeImages = {};
   Symbol? _homeSymbol;
@@ -104,6 +105,7 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
       if (!_active || !mounted) return;
       setState(() {});
       _refreshMarkers();
+      _refreshPlaces();
     });
     // The tracker's stationary interval is long (up to ~15 min), so force a
     // fresh fix on open instead of waiting for the next scheduled update.
@@ -181,24 +183,6 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     return best;
   }
 
-  /// Screen-pixel fan offsets for contacts grouped at the same place.
-  Offset? _clusterOffset(String address) {
-    final placeId = _groupedAddresses[address];
-    if (placeId == null || placeId.isEmpty) return null;
-    final peers = _groupedAddresses.entries
-        .where((e) => e.value == placeId)
-        .map((e) => e.key)
-        .toList();
-    final index = peers.indexOf(address);
-    if (index < 0) return null;
-    if (peers.length == 1) return const Offset(0, -105);
-    final angle = math.pi * (0.15 + 0.7 * index / (peers.length - 1));
-    return Offset(
-      math.cos(angle) * 110,
-      -math.sin(angle) * 110,
-    );
-  }
-
   String _contactName(String address) {
     final n = VeilidService.instance.getContactName(address);
     if (n != null && n.isNotEmpty) return n;
@@ -207,10 +191,28 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
   }
 
   Future<void> _refreshMarkersNow(MapLibreMapController controller) async {
+    final contacts = VeilidService.instance.contactLocations;
+    final groupedPlaces = <String, Place>{};
+    _groupedAddresses.clear();
+    for (final entry in contacts.entries) {
+      final loc = entry.value;
+      final lat = (loc['lat'] as num?)?.toDouble();
+      final lng = (loc['lng'] as num?)?.toDouble();
+      if (lat == null || lng == null || !isFiniteLatLng(lat, lng)) continue;
+      final place = _groupPlaceFor(entry.key, lat, lng);
+      _groupedAddresses[entry.key] = place?.id ?? '';
+      if (place != null) groupedPlaces[entry.key] = place;
+    }
 
     // Your own position uses the same avatar/initials marker as contacts.
     final me = LocationManager.instance.currentLatLng;
-    if (me != null) {
+    final mePlace =
+        me == null ? null : _groupPlaceFor('__me__', me.latitude, me.longitude);
+    if (mePlace != null) {
+      _groupedAddresses['__me__'] = mePlace.id;
+      groupedPlaces['__me__'] = mePlace;
+    }
+    if (me != null && mePlace == null) {
       final myName = await VeilidService.instance.myName();
       final hasName = myName != null && myName.trim().isNotEmpty;
       final label = hasName ? initialsFor(myName) : 'YOU';
@@ -249,19 +251,7 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
       _meSymbol = null;
     }
 
-    // Contact positions (amber), tagged with their address for tap handling.
-    final contacts = VeilidService.instance.contactLocations;
-    final groupedPlaces = <String, Place>{};
-    _groupedAddresses.clear();
-    for (final entry in contacts.entries) {
-      final loc = entry.value;
-      final lat = (loc['lat'] as num?)?.toDouble();
-      final lng = (loc['lng'] as num?)?.toDouble();
-      if (lat == null || lng == null || !isFiniteLatLng(lat, lng)) continue;
-      final place = _groupPlaceFor(entry.key, lat, lng);
-      _groupedAddresses[entry.key] = place?.id ?? '';
-      if (place != null) groupedPlaces[entry.key] = place;
-    }
+    // Contact positions, tagged with their address for tap handling.
     final seen = <String>{};
     for (final entry in contacts.entries) {
       final loc = entry.value;
@@ -270,6 +260,13 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
       if (lat == null || lng == null || !isFiniteLatLng(lat, lng)) continue;
       seen.add(entry.key);
       final place = groupedPlaces[entry.key];
+      if (place != null) {
+        final symbol = _contactSymbols.remove(entry.key);
+        if (symbol != null) await controller.removeSymbol(symbol);
+        final circle = _contactCircles.remove(entry.key);
+        if (circle != null) await controller.removeCircle(circle);
+        continue;
+      }
       final avatar = AvatarStore.instance.avatarFor(entry.key);
       final String imageId;
       var iconScale = mapMarkerIconSize;
@@ -292,16 +289,11 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
           );
         }
       }
-      final grouped = place != null;
-      final offset = grouped ? _clusterOffset(entry.key) : null;
       final options = SymbolOptions(
-        geometry: grouped
-            ? LatLng(place.latitude, place.longitude)
-            : LatLng(lat, lng),
+        geometry: LatLng(lat, lng),
         iconImage: imageId,
         iconSize: iconScale,
         iconAnchor: 'center',
-        iconOffset: offset,
       );
       final existing = _contactSymbols[entry.key];
       if (existing == null) {
@@ -321,6 +313,13 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     for (final address in _contactSymbols.keys.toList()) {
       if (seen.contains(address)) continue;
       await controller.removeSymbol(_contactSymbols.remove(address)!);
+    }
+    final signature = Object.hashAll([
+      for (final e in _groupedAddresses.entries) '${e.key}=${e.value}',
+    ]);
+    if (_clusterSignature != signature) {
+      _clusterSignature = signature;
+      unawaited(_refreshPlaces());
     }
   }
 
@@ -400,6 +399,7 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
 
   void _onAvatarChanged() {
     _refreshMarkers();
+    _refreshPlaces();
   }
 
   void _onMapPrefsChanged() {
@@ -412,6 +412,35 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     if (!mounted || !_active) return;
     _refreshPlaces();
     _refreshMarkers();
+  }
+
+  Future<List<ClusterAvatar>> _peopleAtPlace(Place place) async {
+    final people = <ClusterAvatar>[];
+    final me = LocationManager.instance.currentLatLng;
+    if (me != null &&
+        _groupPlaceFor('__me__', me.latitude, me.longitude)?.id == place.id) {
+      final name = await VeilidService.instance.myName();
+      final hasName = name != null && name.trim().isNotEmpty;
+      people.add(ClusterAvatar(
+        initials: hasName ? initialsFor(name) : 'YOU',
+        color: avatarColorFor(name ?? 'You'),
+        photo: AvatarStore.instance.mine,
+      ));
+    }
+    for (final entry in VeilidService.instance.contactLocations.entries) {
+      final loc = entry.value;
+      final lat = (loc['lat'] as num?)?.toDouble();
+      final lng = (loc['lng'] as num?)?.toDouble();
+      if (lat == null || lng == null || !isFiniteLatLng(lat, lng)) continue;
+      if (_groupPlaceFor(entry.key, lat, lng)?.id != place.id) continue;
+      final name = _contactName(entry.key);
+      people.add(ClusterAvatar(
+        initials: initialsFor(name),
+        color: avatarColorFor(name),
+        photo: AvatarStore.instance.avatarFor(entry.key),
+      ));
+    }
+    return people;
   }
 
   /// Saved places as translucent radius circles, sized from the current zoom
@@ -444,15 +473,34 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
         features.add(_areaFeature(place.id, place.latitude, place.longitude,
             place.radiusMeters, color));
       }
-      final imageId = 'place_${place.id}_${iconId}_$color';
-      if (_placeImages.add(imageId)) {
-        await controller.addImage(
-          imageId,
-          await renderPlaceMarker(
-            iconId,
-            Color(int.parse(color.substring(1), radix: 16) | 0xFF000000),
-          ),
-        );
+      final parsedColor =
+          Color(int.parse(color.substring(1), radix: 16) | 0xFF000000);
+      final members = await _peopleAtPlace(place);
+      final String imageId;
+      if (members.isEmpty) {
+        imageId = 'place_${place.id}_${iconId}_$color';
+        if (_placeImages.add(imageId)) {
+          await controller.addImage(
+            imageId,
+            await renderPlaceMarker(iconId, parsedColor),
+          );
+        }
+      } else {
+        final memberKey = members
+            .map((m) => m.photo?.hashCode ?? m.initials)
+            .join(',');
+        imageId =
+            'place_cluster_${place.id}_${iconId}_${color}_${members.length}_${memberKey.hashCode}';
+        if (_placeImages.add(imageId)) {
+          await controller.addImage(
+            imageId,
+            await renderPlaceCluster(
+              placeIcon: placeIconFor(iconId).icon,
+              color: parsedColor,
+              people: members,
+            ),
+          );
+        }
       }
       final options = SymbolOptions(
         geometry: LatLng(place.latitude, place.longitude),

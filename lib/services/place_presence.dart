@@ -1,6 +1,7 @@
 import 'package:geolocator/geolocator.dart';
 
 import 'package:grid_frontend/models/place.dart';
+import 'package:grid_frontend/services/location_manager.dart';
 import 'package:grid_frontend/services/veilid_service.dart';
 import 'package:grid_frontend/utilities/lat_lng_validation.dart';
 
@@ -28,4 +29,14 @@ String contactLabel(String address) {
   if (name != null && name.isNotEmpty) return name;
   final parts = address.split(':');
   return parts.length >= 2 ? parts[1] : address;
+}
+
+
+/// True when my own latest fix is inside [place].
+bool selfAtPlace(Place place) {
+  final me = LocationManager.instance.currentLatLng;
+  if (me == null) return false;
+  final meters = Geolocator.distanceBetween(
+      place.latitude, place.longitude, me.latitude, me.longitude);
+  return meters <= place.radiusMeters;
 }

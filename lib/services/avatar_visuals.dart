@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -94,5 +95,144 @@ Future<Uint8List> renderInitialsBadge(String initials,
       .toImage(size.toInt(), size.toInt());
   final data = await image.toByteData(format: ui.ImageByteFormat.png);
   image.dispose();
+  return data!.buffer.asUint8List();
+}
+
+
+class ClusterAvatar {
+  const ClusterAvatar({
+    required this.initials,
+    required this.color,
+    this.photo,
+  });
+  final String initials;
+  final Color color;
+  final Uint8List? photo;
+}
+
+/// Place icon with up to three member avatars above it and a count badge.
+Future<Uint8List> renderPlaceCluster({
+  required IconData placeIcon,
+  required Color color,
+  required List<ClusterAvatar> people,
+}) async {
+  const size = 192.0;
+  const center = Offset(size / 2, size / 2);
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+  // Place circle.
+  canvas.drawCircle(center, 64, Paint()..color = color);
+  canvas.drawCircle(
+    center,
+    60,
+    Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 6
+      ..color = Colors.white,
+  );
+  final iconPainter = TextPainter(
+    text: TextSpan(
+      text: String.fromCharCode(placeIcon.codePoint),
+      style: TextStyle(
+        fontFamily: placeIcon.fontFamily,
+        package: placeIcon.fontPackage,
+        fontSize: 58,
+        color: Colors.white,
+      ),
+    ),
+    textDirection: TextDirection.ltr,
+  )..layout();
+  iconPainter.paint(
+    canvas,
+    Offset(center.dx - iconPainter.width / 2,
+        center.dy - iconPainter.height / 2),
+  );
+
+  final shown = people.take(3).toList();
+  const avatarSize = 54.0;
+  const positions = <Offset>[
+    Offset(96, 28),
+    Offset(58, 40),
+    Offset(134, 40),
+  ];
+  for (var i = 0; i < shown.length; i++) {
+    final c = positions[i];
+    final rect = Rect.fromCircle(center: c, radius: avatarSize / 2);
+    final photo = shown[i].photo;
+    if (photo != null) {
+      final codec = await ui.instantiateImageCodec(photo);
+      final frame = await codec.getNextFrame();
+      final image = frame.image;
+      canvas.save();
+      canvas.clipPath(Path()..addOval(rect));
+      final scale = math.max(
+        avatarSize / image.width,
+        avatarSize / image.height,
+      );
+      final dw = image.width * scale;
+      final dh = image.height * scale;
+      canvas.drawImageRect(
+        image,
+        Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+        Rect.fromCenter(
+            center: c, width: dw, height: dh),
+        Paint(),
+      );
+      canvas.restore();
+      image.dispose();
+      codec.dispose();
+    } else {
+      canvas.drawCircle(c, avatarSize / 2, Paint()..color = shown[i].color);
+      final tp = TextPainter(
+        text: TextSpan(
+          text: shown[i].initials,
+          style: const TextStyle(
+            color: Colors.white,
+            fontFamily: 'Geist',
+            fontWeight: FontWeight.w700,
+            fontSize: 20,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, c - Offset(tp.width / 2, tp.height / 2));
+    }
+    canvas.drawCircle(
+      c,
+      avatarSize / 2,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 4
+        ..color = Colors.white,
+    );
+  }
+
+  if (people.length > 3) {
+    final badge = Offset(size - 24, 24);
+    canvas.drawCircle(badge, 20, Paint()..color = const Color(0xFF11161A));
+    canvas.drawCircle(
+      badge,
+      20,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3
+        ..color = Colors.white,
+    );
+    final tp = TextPainter(
+      text: TextSpan(
+        text: '+${people.length - 3}',
+        style: const TextStyle(
+            color: Colors.white, fontFamily: 'Geist', fontSize: 16),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, badge - Offset(tp.width / 2, tp.height / 2));
+  }
+
+  final out = await recorder
+      .endRecording()
+      .toImage(size.toInt(), size.toInt());
+  final data = await out.toByteData(format: ui.ImageByteFormat.png);
+  out.dispose();
   return data!.buffer.asUint8List();
 }

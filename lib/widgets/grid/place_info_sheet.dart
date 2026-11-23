@@ -33,9 +33,9 @@ class _PlaceInfoSheetState extends State<PlaceInfoSheet> {
   Widget build(BuildContext context) {
     final c = context.gridColors;
     final here = contactsAtPlace(_place);
-    final who = here.isEmpty
-        ? 'Nobody is here right now'
-        : here.map(contactLabel).join(', ');
+    final labels = [if (selfAtPlace(_place)) 'You', ...here.map(contactLabel)];
+    final who =
+        labels.isEmpty ? 'Nobody is here right now' : labels.join(', ');
 
     return GridSheetContainer(
       child: Padding(
