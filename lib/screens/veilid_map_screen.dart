@@ -180,7 +180,13 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
       if (!isFiniteLatLng(place.latitude, place.longitude)) continue;
       final meters = Geolocator.distanceBetween(
           place.latitude, place.longitude, lat, lng);
-      if (meters <= place.radiusMeters && meters < bestMeters) {
+      // Home uses a tight ~30 m (100 ft) display radius: two people that close
+      // are treated as sharing the same home. The larger home radius remains
+      // for auto-pause only.
+      final limit = place.id == '__home__'
+          ? math.min(place.radiusMeters, 30.0)
+          : place.radiusMeters;
+      if (meters <= limit && meters < bestMeters) {
         best = place;
         bestMeters = meters;
       }
