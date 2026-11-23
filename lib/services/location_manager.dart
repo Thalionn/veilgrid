@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:libre_location/libre_location.dart' as libre;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'location/location_service.dart';
 import 'location/location_update.dart';
@@ -33,6 +34,9 @@ class LocationManager with ChangeNotifier {
   late final AppLifecycleListener _lifecycleListener;
   StreamSubscription<LocationUpdate>? _locationSubscription;
   StreamSubscription<bool>? _motionSubscription;
+  StreamSubscription<libre.ActivityEvent>? _activitySubscription;
+  LocationActivity _activity = LocationActivity.unknown;
+  libre.TrackingPreset? _appliedPreset;
 
   /// Must be awaited once at boot, before [startTracking]. Hydrates the
   /// persisted sharing mode so the first config push uses the user's choice
@@ -46,12 +50,65 @@ class LocationManager with ChangeNotifier {
     // Pausing (incognito or the home geofence) must also relax the GPS
     // hardware, not just suppress sending.
     SharingStateNotifier.instance.addListener(_onSharingStateChanged);
+    _activitySubscription =
+        libre.LibreLocation.onActivityChange.listen((event) {
+      _activity = _activityFrom(event.activity);
+      // In a vehicle we want live movement on the map; on foot/still we go
+      // back to the user's chosen tracking tier.
+      _applyTrackingPreset();
+    });
     _setupLocationService();
   }
 
   void _onSharingStateChanged() {
     _updateTrackingConfig();
+    _applyTrackingPreset();
     notifyListeners();
+  }
+
+  LocationActivity _activityFrom(String? activity) => switch (activity) {
+        'still' => LocationActivity.still,
+        'walking' || 'on_foot' || 'running' || 'on_bicycle' =>
+          LocationActivity.walking,
+        'in_vehicle' => LocationActivity.inVehicle,
+        _ => LocationActivity.unknown,
+      };
+
+  /// Chooses the tracker tier from pause state, the user's mode, and whether
+  /// they are currently driving. Driving is the one time we spend battery for
+  /// live movement, matching how Life360 shows a car moving on the road.
+  Future<void> _applyTrackingPreset() async {
+    if (!_isTracking) return;
+    final paused = SharingStateNotifier.instance.isPaused;
+    final libre.TrackingPreset preset;
+    if (paused) {
+      preset = libre.TrackingPreset.low;
+    } else if (_activity == LocationActivity.inVehicle) {
+      // Driving is the one time contacts need live movement. Spend the
+      // battery here so the car is actually shown on the road.
+      preset = libre.TrackingPreset.high;
+    } else if (_activity == LocationActivity.walking) {
+      preset = _trackingMode == TrackingMode.live
+          ? libre.TrackingPreset.high
+          : libre.TrackingPreset.balanced;
+    } else {
+      // Stationary (or not yet classified): GPS at high accuracy every minute
+      // is pure waste when the position is not changing. The low tier uses
+      // passive fixes with a 500 m / 5 min floor; the dispatch heartbeat still
+      // posts the last known position so contacts see a fresh "last seen".
+      // Live sharing keeps the tighter tier because the user asked for it.
+      preset = _trackingMode == TrackingMode.live
+          ? libre.TrackingPreset.balanced
+          : libre.TrackingPreset.low;
+    }
+    if (_appliedPreset == preset) return;
+    _appliedPreset = preset;
+    try {
+      await libre.LibreLocation.setPreset(preset);
+    } catch (_) {
+      // Tracker may not be up yet; the next activity event retries.
+      _appliedPreset = null;
+    }
   }
 
   // Listen for app foreground/background changes
@@ -62,12 +119,14 @@ class LocationManager with ChangeNotifier {
           case AppLifecycleState.resumed:
             _isInForeground = true;
             _updateTrackingConfig();
+            _applyTrackingPreset();
             break;
           case AppLifecycleState.paused:
           case AppLifecycleState.inactive:
           case AppLifecycleState.detached:
             _isInForeground = false;
             _updateTrackingConfig();
+            _applyTrackingPreset();
             break;
           default:
             break;
@@ -116,6 +175,7 @@ class LocationManager with ChangeNotifier {
     if (_trackingMode == mode) return;
     _trackingMode = mode;
     _updateTrackingConfig();
+    _applyTrackingPreset();
     notifyListeners();
   }
 
@@ -228,6 +288,7 @@ class LocationManager with ChangeNotifier {
 
     // Apply battery-saver/foreground/background config
     _updateTrackingConfig();
+    _applyTrackingPreset();
     notifyListeners();
   }
 
@@ -263,6 +324,7 @@ class LocationManager with ChangeNotifier {
     _lifecycleListener.dispose();
     _locationSubscription?.cancel();
     _motionSubscription?.cancel();
+    _activitySubscription?.cancel();
     if (_isTracking) {
       _locationService.stop();
       _isTracking = false;

@@ -6,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 /// Hides the basemap on mobile data when the user asks for it.
 ///
-/// Markers, trails and the home circle are map annotations, not style layers,
+/// Markers and the home circle are map annotations, not style layers,
 /// so they keep rendering over a plain background. The setting exists because
 /// a moving vector map can download hundreds of megabytes over cellular in a
 /// long trip; Life360 uses roughly 30 MB for the same kind of day.

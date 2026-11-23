@@ -4,7 +4,6 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:grid_frontend/models/location_history.dart';
 import 'package:grid_frontend/models/place.dart';
 import 'package:grid_frontend/screens/map/grid_map_style.dart';
 import 'package:grid_frontend/screens/battery_settings_screen.dart';
@@ -25,7 +24,7 @@ import 'package:grid_frontend/widgets/grid/place_info_sheet.dart';
 import 'package:grid_frontend/widgets/grid/tab_active.dart';
 
 /// A minimal P2P map: the basemap plus a marker for each contact's latest
-/// received location, your own position, trails, a sharing pill, and a home
+/// received location, your own position, places, a sharing pill, and a home
 /// circle. No server.
 class VeilidMapScreen extends StatefulWidget {
   const VeilidMapScreen({super.key});
@@ -43,10 +42,8 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
   final List<Circle> _homeCircles = [];
   Circle? _meCircle;
   final Map<String, Circle> _contactCircles = {};
-  final Map<String, Line> _trailLines = {};
   final List<Circle> _placeCircles = [];
   StreamSubscription<Map<String, dynamic>>? _locSub;
-  StreamSubscription<String>? _historySub;
   StreamSubscription<void>? _contactsSub;
   bool _centeredOnMe = false;
   bool _sending = false;
@@ -55,13 +52,12 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
   // trigger two full rebuilds (location stream + history stream); this
   // coalesces them and keeps a 6000-point polyline from being re-tessellated
   // on every message.
-  Timer? _trailDebounce;
-  bool _trailRefreshRunning = false;
-  bool _trailRefreshQueued = false;
   bool _markerRefreshRunning = false;
   bool _markerRefreshQueued = false;
   bool _active = true;
   bool _dataSaverActive = false;
+  bool _homeAreaReady = false;
+  bool _placesAreaReady = false;
 
   @override
   void didChangeDependencies() {
@@ -72,7 +68,6 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     if (!_active) return;
     // Catch up: the map was frozen while another tab was visible.
     _refreshMarkers();
-    _scheduleTrailRefresh();
     _refreshPlaces();
     _refreshHome();
     if (!_centeredOnMe && LocationManager.instance.currentLatLng != null) {
@@ -87,7 +82,6 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     _locSub = VeilidService.instance.locationUpdates.listen((_) {
       if (!_active || !mounted) return;
       _refreshMarkers();
-      _scheduleTrailRefresh();
     });
     LocationManager.instance.addListener(_onLocation);
     SharingStateNotifier.instance.addListener(_onSharingChanged);
@@ -98,13 +92,6 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
       if (!_active || !mounted) return;
       setState(() {});
       _refreshMarkers();
-      _scheduleTrailRefresh();
-    });
-    // Refresh trails shortly after a point is written (avoids the read/write
-    // race and the long stationary interval between location events).
-    _historySub = VeilidService.instance.historyUpdates?.listen((_) {
-      if (!_active || !mounted) return;
-      _scheduleTrailRefresh();
     });
     // The tracker's stationary interval is long (up to ~15 min), so force a
     // fresh fix on open instead of waiting for the next scheduled update.
@@ -120,9 +107,7 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     SharingStateNotifier.instance.removeListener(_onSharingChanged);
     PlacesService.instance.removeListener(_onPlacesChanged);
     MapDataSaver.instance.removeListener(_onDataSaverChanged);
-    _trailDebounce?.cancel();
     _locSub?.cancel();
-    _historySub?.cancel();
     _contactsSub?.cancel();
     super.dispose();
   }
@@ -130,7 +115,6 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
   void _onLocation() {
     if (!mounted || !_active) return;
     _refreshMarkers();
-    _scheduleTrailRefresh();
     // Center once the first fix arrives (the camera may have started on the
     // default location before GPS delivered anything).
     if (!_centeredOnMe && LocationManager.instance.currentLatLng != null) {
@@ -220,63 +204,9 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     }
   }
 
-  /// Ensure the trail layer is refreshed soon (coalesced), rather than on
-  /// every location/history event.
-  void _scheduleTrailRefresh() {
-    if (!mounted) return;
-    _trailDebounce?.cancel();
-    _trailDebounce = Timer(const Duration(milliseconds: 1500), _refreshTrails);
-  }
-
-  /// Draw the persisted trails (my own and each contact's) as polylines,
-  /// updating existing lines in place instead of tearing the layer down.
-  Future<void> _refreshTrails() async {
-    if (_trailRefreshRunning) {
-      _trailRefreshQueued = true;
-      return;
-    }
-    final controller = _controller;
-    if (controller == null || !_styleLoaded) return;
-    _trailRefreshRunning = true;
-    try {
-      final trails = await VeilidService.instance.loadTrails();
-      final seen = <String>{};
-      for (final entry in trails.entries) {
-        final points = entry.value
-            .where((p) => isFiniteLatLng(p.latitude, p.longitude))
-            .toList();
-        if (points.length < 2) continue;
-        seen.add(entry.key);
-        final coords = points
-            .map((LocationPoint p) => LatLng(p.latitude, p.longitude))
-            .toList();
-        final options = LineOptions(
-          geometry: coords,
-          lineColor: '#8b5cf6',
-          lineWidth: 3.0,
-          lineOpacity: 0.7,
-        );
-        final existing = _trailLines[entry.key];
-        if (existing == null) {
-          _trailLines[entry.key] = await controller.addLine(options);
-        } else {
-          await controller.updateLine(existing, options);
-        }
-      }
-      for (final address in _trailLines.keys.toList()) {
-        if (seen.contains(address)) continue;
-        await controller.removeLine(_trailLines.remove(address)!);
-      }
-    } finally {
-      _trailRefreshRunning = false;
-      if (_trailRefreshQueued) {
-        _trailRefreshQueued = false;
-        _scheduleTrailRefresh();
-      }
-    }
-  }
-
-  /// Draw the saved home location as a marker + translucent radius circle.
+  /// Draw the saved home location: a GeoJSON radius polygon (MapLibre scales
+  /// it natively at every zoom, so it always covers the true ground area) plus
+  /// a small centre marker.
   Future<void> _refreshHome() async {
     final controller = _controller;
     if (controller == null || !_styleLoaded) return;
@@ -288,7 +218,12 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
 
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString('home_location');
-    if (raw == null || raw.isEmpty) return;
+    if (raw == null || raw.isEmpty) {
+      if (_homeAreaReady) {
+        await controller.setGeoJsonSource('home_area', _emptyAreas());
+      }
+      return;
+    }
     final parts = raw.split(',');
     if (parts.length != 2) return;
     final lat = double.tryParse(parts[0]);
@@ -296,22 +231,27 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     if (lat == null || lng == null) return;
     final radiusMeters = prefs.getDouble('home_radius') ?? 150;
 
-    // True ground radius: convert metres to pixels for the current zoom (and
-    // latitude) instead of a fixed approximation, so it scales with the map.
-    final zoom = controller.cameraPosition?.zoom ?? 14;
-    final metersPerPixel = 40075016.686 *
-        math.cos(lat * math.pi / 180) /
-        (256 * math.pow(2, zoom));
-    final radiusPx = metersPerPixel.isFinite && metersPerPixel > 0
-        ? (radiusMeters / metersPerPixel).clamp(6.0, 12000.0)
-        : 30.0;
+    final data = _areaCollection([
+      _areaFeature('home', lat, lng, radiusMeters),
+    ]);
+    if (!_homeAreaReady) {
+      await controller.addGeoJsonSource('home_area', data);
+      await controller.addFillLayer(
+        'home_area',
+        'home_area_fill',
+        FillLayerProperties(fillColor: '#22c55e', fillOpacity: 0.12),
+      );
+      await controller.addLineLayer(
+        'home_area',
+        'home_area_line',
+        LineLayerProperties(
+            lineColor: '#22c55e', lineWidth: 1.5, lineOpacity: 0.5),
+      );
+      _homeAreaReady = true;
+    } else {
+      await controller.setGeoJsonSource('home_area', data);
+    }
 
-    _homeCircles.add(await controller.addCircle(CircleOptions(
-      geometry: LatLng(lat, lng),
-      circleRadius: radiusPx,
-      circleColor: '#22c55e',
-      circleOpacity: 0.12,
-    )));
     _homeCircles.add(await controller.addCircle(CircleOptions(
       geometry: LatLng(lat, lng),
       circleRadius: 6.0,
@@ -340,28 +280,74 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
       await controller.removeCircles(List<Circle>.of(_placeCircles));
       _placeCircles.clear();
     }
-    final zoom = controller.cameraPosition?.zoom ?? 14;
+
+    final features = <Map<String, dynamic>>[];
     for (final place in PlacesService.instance.places) {
       if (!isFiniteLatLng(place.latitude, place.longitude)) continue;
-      final metersPerPixel = 40075016.686 *
-          math.cos(place.latitude * math.pi / 180) /
-          (256 * math.pow(2, zoom));
-      if (!metersPerPixel.isFinite || metersPerPixel <= 0) continue;
-      final radiusPx =
-          (place.radiusMeters / metersPerPixel).clamp(8.0, 6000.0);
+      features.add(_areaFeature(
+          place.id, place.latitude, place.longitude, place.radiusMeters));
+      // Keep a tappable centre marker; the radius itself is a native layer.
       _placeCircles.add(await controller.addCircle(
         CircleOptions(
           geometry: LatLng(place.latitude, place.longitude),
-          circleRadius: radiusPx,
+          circleRadius: 6.0,
           circleColor: '#14b8a6',
-          circleOpacity: 0.10,
-          circleStrokeWidth: 1.5,
-          circleStrokeColor: '#14b8a6',
-          circleStrokeOpacity: 0.5,
+          circleOpacity: 0.9,
+          circleStrokeWidth: 2.0,
+          circleStrokeColor: '#ffffff',
         ),
         {'placeId': place.id},
       ));
     }
+
+    final data = _areaCollection(features);
+    if (!_placesAreaReady) {
+      await controller.addGeoJsonSource('places_area', data);
+      await controller.addFillLayer(
+        'places_area',
+        'places_area_fill',
+        FillLayerProperties(fillColor: '#14b8a6', fillOpacity: 0.10),
+      );
+      await controller.addLineLayer(
+        'places_area',
+        'places_area_line',
+        LineLayerProperties(
+            lineColor: '#14b8a6', lineWidth: 1.5, lineOpacity: 0.5),
+      );
+      _placesAreaReady = true;
+    } else {
+      await controller.setGeoJsonSource('places_area', data);
+    }
+  }
+
+  Map<String, dynamic> _emptyAreas() =>
+      {'type': 'FeatureCollection', 'features': <dynamic>[]};
+
+  Map<String, dynamic> _areaCollection(List<Map<String, dynamic>> features) =>
+      {'type': 'FeatureCollection', 'features': features};
+
+  /// GeoJSON polygon approximating a ground-radius circle.
+  Map<String, dynamic> _areaFeature(
+      String id, double lat, double lng, double radiusMeters) {
+    const earth = 6371000.0;
+    const steps = 64;
+    final latRad = lat * math.pi / 180;
+    final ring = <List<double>>[];
+    for (var i = 0; i <= steps; i++) {
+      final bearing = 2 * math.pi * i / steps;
+      final dLat = (radiusMeters / earth) * math.cos(bearing);
+      final dLng = (radiusMeters / (earth * math.cos(latRad))) *
+          math.sin(bearing);
+      ring.add([lng + dLng * 180 / math.pi, lat + dLat * 180 / math.pi]);
+    }
+    return {
+      'type': 'Feature',
+      'properties': {'id': id},
+      'geometry': {
+        'type': 'Polygon',
+        'coordinates': [ring],
+      },
+    };
   }
 
   void _openPlace(String id) {
@@ -557,21 +543,19 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
               _controller = controller;
               controller.onCircleTapped.add(_onCircleTapped);
             },
-            onCameraIdle: () {
-              if (!mounted || !_active) return;
-              _refreshPlaces();
-              // Keep the home circle at its true ground size on every zoom.
-              _refreshHome();
-            },
             onStyleLoadedCallback: () {
               if (!mounted) return;
               _styleLoaded = true;
-              // A style reload invalidates every annotation handle.
+              // A style reload invalidates every annotation handle; drop the
+              // stale handles instead of trying to remove them from the new
+              // style.
               _meCircle = null;
               _contactCircles.clear();
-              _trailLines.clear();
+              _homeCircles.clear();
+              _placeCircles.clear();
+              _homeAreaReady = false;
+              _placesAreaReady = false;
               _refreshMarkers();
-              _refreshTrails();
               _refreshHome();
               _refreshPlaces();
             },

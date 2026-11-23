@@ -10,11 +10,9 @@ import 'package:grid_frontend/services/location_manager.dart';
 import 'package:grid_frontend/services/location/location_dispatch.dart';
 import 'package:grid_frontend/services/sharing_state_notifier.dart';
 import 'package:grid_frontend/services/veilid_service.dart';
-import 'package:grid_frontend/services/database_service.dart';
 import 'package:grid_frontend/services/location/home_geofence_service.dart';
 import 'package:grid_frontend/services/battery_guard.dart';
 import 'package:grid_frontend/services/map_data_saver.dart';
-import 'package:grid_frontend/repositories/location_history_repository.dart';
 import 'package:grid_frontend/screens/home_screen.dart';
 
 Future<void> main() async {
@@ -25,7 +23,6 @@ Future<void> main() async {
   await LocationManager.instance.initialize();
   runApp(const GridApp());
   _startLocation();
-  _initHistory();
   _initSharing();
   _initPublish();
   BatteryGuard.instance.start();
@@ -42,20 +39,6 @@ Future<void> _startLocation() async {
   } catch (e) {
     debugPrint('[Location] start failed (non-fatal): $e');
   }
-}
-
-/// Wire the device-local location history repo into VeilidService so received
-/// contact locations (and my own fixes) are recorded as trails. Construction is
-/// cheap (the DB is opened lazily on first write).
-void _initHistory() {
-  final db = DatabaseService();
-  final repo = LocationHistoryRepository(db);
-  VeilidService.instance.attachHistoryRepo(repo);
-
-  // Record my own trail from the location stream (the repo throttles points).
-  LocationManager.instance.locationStream.listen((update) {
-    VeilidService.instance.recordMyLocation(update.latitude, update.longitude);
-  });
 }
 
 /// Continuously share my location through the dispatch policy.

@@ -49,7 +49,7 @@ String buildGridMapStyle({
   String? pmtilesUrl,
   bool dataSaver = false,
 }) {
-  // Data saver: no tile source at all. Markers, trails, places and the home
+  // Data saver: no tile source at all. Markers, places and the home
   // circle are annotations, so they still render on the plain background.
   if (dataSaver) {
     return jsonEncode({

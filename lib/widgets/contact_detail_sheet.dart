@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:grid_frontend/screens/contact_history_screen.dart';
 import 'package:grid_frontend/services/location_manager.dart';
+import 'package:grid_frontend/services/places_service.dart';
+import 'package:grid_frontend/styles/grid_colors.dart';
 import 'package:grid_frontend/services/veilid_service.dart';
 import 'package:grid_frontend/utilities/time_ago_formatter.dart';
 import 'package:grid_frontend/widgets/grid/grid_mono.dart';
@@ -68,6 +69,41 @@ class _ContactDetailSheetState extends State<ContactDetailSheet> {
   @override
   Widget build(BuildContext context) {
     final loc = VeilidService.instance.contactLocations[widget.address];
+    final c = context.gridColors;
+    final motion = VeilidService.instance.contactMotion(widget.address);
+    String? status;
+    IconData? statusIcon;
+    if (motion != null) {
+      if (motion['moving'] == true) {
+        status = 'Driving';
+        statusIcon = Icons.directions_car;
+      } else {
+        final since = motion['since'] as DateTime?;
+        String? placeName;
+        final lat = (loc?['lat'] as num?)?.toDouble();
+        final lng = (loc?['lng'] as num?)?.toDouble();
+        if (lat != null && lng != null) {
+          for (final place in PlacesService.instance.places) {
+            if (Geolocator.distanceBetween(
+                    place.latitude, place.longitude, lat, lng) <=
+                place.radiusMeters) {
+              placeName = place.name;
+              break;
+            }
+          }
+        }
+        final minutes =
+            since == null ? null : DateTime.now().difference(since).inMinutes;
+        final forText = minutes == null
+            ? ''
+            : (minutes < 1 ? 'just now' : '${minutes}m');
+        status = placeName != null
+            ? 'At $placeName · $forText'
+            : 'Stationary · $forText';
+        statusIcon =
+            placeName != null ? Icons.place_outlined : Icons.pause_circle_outline;
+      }
+    }
 
     String? lastSeen;
     String? distance;
@@ -114,6 +150,20 @@ class _ContactDetailSheetState extends State<ContactDetailSheet> {
                 ),
               ],
             ),
+            if (status != null) ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Icon(statusIcon, size: 15, color: c.mint),
+                  const SizedBox(width: 6),
+                  Text(status,
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: c.text2)),
+                ],
+              ),
+            ],
             const SizedBox(height: 8),
             Row(
               children: [
@@ -122,20 +172,6 @@ class _ContactDetailSheetState extends State<ContactDetailSheet> {
                 const SizedBox(width: 16),
                 _infoTile(context, 'Distance', distance ?? '—'),
               ],
-            ),
-            const SizedBox(height: 4),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.timeline),
-              title: const Text('View location history'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () {
-                final nav = Navigator.of(context);
-                nav.pop();
-                nav.push(MaterialPageRoute(
-                  builder: (_) => ContactHistoryScreen(address: widget.address),
-                ));
-              },
             ),
             const SizedBox(height: 8),
             SwitchListTile(

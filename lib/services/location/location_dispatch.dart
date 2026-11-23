@@ -79,13 +79,6 @@ class LocationDispatch {
   /// resting position immediately.
   bool _justEnteredStill = false;
 
-  // Cruise-mode detection (sustained high-speed driving). Lets the
-  // throttle relax once we're confident the user is on the highway —
-  // posting every 250m/30s on I-95 for 2 hours is the case that wrecks
-  // the battery if we don't back off.
-  DateTime? _highSpeedSince;
-  bool _isCruising = false;
-
   StreamSubscription<libre.Position>? _motionSub;
   StreamSubscription<libre.ActivityEvent>? _activitySub;
 
@@ -207,8 +200,6 @@ class LocationDispatch {
       return true;
     }
 
-    _updateCruiseState(fix, now);
-
     final elapsed = now.difference(last);
     final distance = _haversineMeters(
       prev.latitude,
@@ -216,7 +207,9 @@ class LocationDispatch {
       fix.latitude,
       fix.longitude,
     );
-    final t = _customEnabled
+    // A custom cadence is for check-ins while resting. It must not slow the
+    // one case that needs live updates: a contact driving on the road.
+    final t = (_customEnabled && _activity != LocationActivity.inVehicle)
         ? _Thresholds(
             distanceM: _customDistanceM,
             interval: _customInterval,
@@ -224,7 +217,7 @@ class LocationDispatch {
               seconds: math.max(_customInterval.inSeconds * 4, 300),
             ),
           )
-        : _thresholdsFor(_activity, _mode, cruising: _isCruising);
+        : _thresholdsFor(_activity, _mode);
 
     if (distance >= t.distanceM || elapsed >= t.interval) {
       _record(fix, now);
@@ -247,24 +240,6 @@ class LocationDispatch {
     _lastPostAt = at;
   }
 
-  void _updateCruiseState(LocationUpdate fix, DateTime now) {
-    if (_activity != LocationActivity.inVehicle) {
-      _isCruising = false;
-      _highSpeedSince = null;
-      return;
-    }
-    // 13.9 m/s = 50 km/h ≈ 31 mph. Sustained for 2 min ⇒ highway-y.
-    if (fix.speed >= 13.9) {
-      _highSpeedSince ??= now;
-      if (now.difference(_highSpeedSince!).inMinutes >= 2) {
-        _isCruising = true;
-      }
-    } else {
-      _highSpeedSince = null;
-      _isCruising = false;
-    }
-  }
-
   LocationActivity _mapActivity(String? activity) {
     switch (activity) {
       case 'still':
@@ -281,14 +256,27 @@ class LocationDispatch {
     }
   }
 
-  _Thresholds _thresholdsFor(
-    LocationActivity activity,
-    SharingMode mode, {
-    required bool cruising,
-  }) {
-    // Light mode: state-transition pings + 15-min heartbeat, regardless
-    // of activity. This is the "I just want my friends to know roughly
-    // where I am" tier.
+  _Thresholds _thresholdsFor(LocationActivity activity, SharingMode mode) {
+    // Driving outranks every other tier: it is the one moment contacts should
+    // see a person move along a road, even for users on the light tier.
+    if (activity == LocationActivity.inVehicle) {
+      // ~5 s in Live, 10 s otherwise: fast enough that the car visibly follows
+      // the road instead of hopping between intersections.
+      return mode == SharingMode.live
+          ? const _Thresholds(
+              distanceM: 25,
+              interval: Duration(seconds: 5),
+              heartbeat: Duration(minutes: 2),
+            )
+          : const _Thresholds(
+              distanceM: 50,
+              interval: Duration(seconds: 10),
+              heartbeat: Duration(minutes: 3),
+            );
+    }
+
+    // Light mode: state-transition pings + 15-min heartbeat. This is the
+    // "I just want my friends to know roughly where I am" tier.
     if (mode == SharingMode.light) {
       return const _Thresholds(
         distanceM: 1000,
@@ -297,30 +285,7 @@ class LocationDispatch {
       );
     }
 
-    // Cruise overrides the in-vehicle defaults for sustained highway
-    // driving. Same in Balanced and Live — the user already chose a
-    // tier; cruise just relaxes the worst case (long monotonous drives).
-    if (cruising) {
-      return const _Thresholds(
-        distanceM: 750,
-        interval: Duration(seconds: 90),
-        heartbeat: Duration(minutes: 5),
-      );
-    }
-
     switch (activity) {
-      case LocationActivity.inVehicle:
-        return mode == SharingMode.live
-            ? const _Thresholds(
-                distanceM: 100,
-                interval: Duration(seconds: 15),
-                heartbeat: Duration(minutes: 5),
-              )
-            : const _Thresholds(
-                distanceM: 250,
-                interval: Duration(seconds: 30),
-                heartbeat: Duration(minutes: 5),
-              );
       case LocationActivity.walking:
         return mode == SharingMode.live
             ? const _Thresholds(
@@ -363,6 +328,13 @@ class LocationDispatch {
           distanceM: 100,
           interval: Duration(seconds: 60),
           heartbeat: Duration(minutes: 15),
+        );
+      case LocationActivity.inVehicle:
+        // Already returned above; kept so the switch stays exhaustive.
+        return const _Thresholds(
+          distanceM: 50,
+          interval: Duration(seconds: 10),
+          heartbeat: Duration(minutes: 3),
         );
     }
   }

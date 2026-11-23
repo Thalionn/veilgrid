@@ -159,8 +159,9 @@ class _BatterySettingsScreenState extends State<BatterySettingsScreen> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Text(
-                'Sends are skipped unless this much time or distance has '
-                'passed. Bigger values save battery but update more slowly.',
+                'While you are not driving, sends are skipped unless this '
+                'much time or distance has passed. Bigger values save battery. '
+                'Driving always updates quickly so contacts can follow you.',
                 style: TextStyle(fontSize: 12, color: c.text3),
               ),
             ),
@@ -171,7 +172,7 @@ class _BatterySettingsScreenState extends State<BatterySettingsScreen> {
           SwitchListTile(
             title: const Text('Wi-Fi only basemap'),
             subtitle: const Text(
-                'Hide map tiles on mobile data; contacts, trails and places still show'),
+                'Hide map tiles on mobile data; contacts and places still show'),
             value: MapDataSaver.instance.enabled,
             onChanged: (v) => MapDataSaver.instance.setEnabled(v),
           ),
@@ -217,8 +218,10 @@ class _BatterySettingsScreenState extends State<BatterySettingsScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Text(
               'Location, screen and cellular data are what drain the battery. '
-              'Battery saver drops GPS accuracy and update frequency; staying '
-              'on a non-map tab while travelling also uses much less data.',
+              'When you stop moving, tracking automatically drops to a '
+              'low-power tier; while driving it speeds up so contacts can '
+              'follow the car. Staying on a non-map tab while travelling also '
+              'uses much less data.',
               style: TextStyle(fontSize: 12, color: c.text3),
             ),
           ),
@@ -235,11 +238,14 @@ class _BatterySettingsScreenState extends State<BatterySettingsScreen> {
 
   String _modeHint(SharingMode mode) => switch (mode) {
         SharingMode.light =>
-          'Roughly every 5 min / 500 m, low accuracy. Lowest battery use.',
+          'Roughly every 5 min / 500 m, low accuracy. Rests when still and '
+              'speeds up while driving. Lowest battery use.',
         SharingMode.balanced =>
-          'Every ~60 s / 50 m while moving, high accuracy. Default.',
+          'Every ~60 s / 50 m while moving, high accuracy. Rests when still '
+              'and speeds up while driving. Default.',
         SharingMode.live =>
-          'Every ~15 s / 10 m, high accuracy. Highest battery use.',
+          'Every ~15 s / 10 m while moving, high accuracy. Speeds up while '
+              'driving. Highest battery use.',
       };
 
   Widget _sectionLabel(BuildContext context, String label) {

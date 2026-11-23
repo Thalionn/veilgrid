@@ -225,20 +225,10 @@ class LibreLocationService implements LocationService {
 
   @override
   Future<void> setConfig(LocationServiceConfig config) async {
+    // Deliberately does not touch the preset: LocationManager owns it so the
+    // activity-aware choice (drive / walk / rest) is not overwritten by a
+    // plain mode change. It applies the mode preset itself after this call.
     _config = config;
-    
-    if (_isTracking) {
-      try {
-        final preset = _presetForMode(config.mode);
-        await libre.LibreLocation.setPreset(preset);
-        DebugLogService.instance.log('config_change', {'preset': preset.toString(), 'mode': config.mode.toString()});
-        print("✓ Location preset updated to $preset");
-      } catch (e) {
-        print("✗ Error updating location preset: $e");
-        DebugLogService.instance.log('error', {'message': 'Error updating preset: $e'});
-        throw e;
-      }
-    }
   }
 
   /// Maps a TrackingMode to the corresponding libre_location preset.

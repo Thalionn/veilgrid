@@ -5,7 +5,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:encrypt/encrypt.dart';
 import 'package:grid_frontend/services/secure_storage_provider.dart';
-import 'package:grid_frontend/repositories/location_history_repository.dart';
 
 /// Thrown when the encryption key can't be found under any known
 /// accessibility level. Caller (typically main.dart) shows a recovery dialog.
@@ -65,21 +64,14 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 5,  // v5: LocationHistory rekeyed from Matrix userId to Veilid address
+      version: 5, // v5: location history removed
       onCreate: (db, version) async {
         await _initializeEncryptionKey();
-        await LocationHistoryRepository.createTable(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
-        if (oldVersion < 2) {
-          await LocationHistoryRepository.createTable(db);
-        }
+        // v5: the location-history table is no longer used; drop any legacy copy.
         if (oldVersion < 5) {
-          // Rekey LocationHistory: userId column -> address (Veilid record key),
-          // and drop the dangling FK to the removed Matrix Users table.
-          // No data migration: the trail was never populated post-strip.
           await db.execute('DROP TABLE IF EXISTS LocationHistory');
-          await LocationHistoryRepository.createTable(db);
         }
       },
     );
@@ -219,7 +211,11 @@ class DatabaseService {
     final db = await database;
     final tables = ['UserLocations', 'LocationHistory', 'SharingPreferences', 'MapIcons'];
     for (final table in tables) {
-      await db.delete(table);
+      try {
+        await db.delete(table);
+      } catch (_) {
+        // Older/newer schemas may not have every table.
+      }
     }
   }
 

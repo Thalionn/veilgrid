@@ -7,9 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:veilid/veilid.dart';
-import 'package:grid_frontend/models/location_history.dart';
 import 'package:grid_frontend/models/place.dart';
-import 'package:grid_frontend/repositories/location_history_repository.dart';
 import 'package:grid_frontend/utilities/lat_lng_validation.dart';
 
 /// Veilid integration for the P2P app.
@@ -72,9 +70,6 @@ class VeilidService {
   String? _myName;
   final Map<String, String> _contactNames = {};
 
-  // Device-local trail recorder, attached at boot. Optional: recording is
-  // best-effort and skipped when it isn't wired up.
-  LocationHistoryRepository? _historyRepo;
 
   // My current route id, so a RouteChange update can tell when it died.
   String? _myRouteId;
@@ -88,6 +83,7 @@ class VeilidService {
   // recent "started moving / stopped" alerts (in-memory, newest first).
   final Map<String, bool> _contactMoving = {};
   final Map<String, int> _contactMovingStreak = {};
+  final Map<String, DateTime> _contactMovingSince = {};
   final List<MovementAlert> _recentAlerts = [];
 
   // Life360-ish hysteresis: ~2 m/s (7 km/h) to start, 0.8 m/s to stop, with an
@@ -107,6 +103,15 @@ class VeilidService {
 
   /// Recent movement alerts, newest first.
   List<MovementAlert> get recentAlerts => List.unmodifiable(_recentAlerts);
+
+  /// Motion state for a contact: `{'moving': bool, 'since': DateTime}`.
+  /// `since` is when they started moving or stopped, so the UI can show
+  /// "Driving" or "Stationary for 12m" like Life360.
+  Map<String, dynamic>? contactMotion(String address) {
+    final moving = _contactMoving[address];
+    if (moving == null) return null;
+    return {'moving': moving, 'since': _contactMovingSince[address]};
+  }
 
   final StreamController<Map<String, dynamic>> _locationController =
       StreamController<Map<String, dynamic>>.broadcast();
@@ -396,6 +401,9 @@ class VeilidService {
     if (_seenNonces.length > 512) _seenNonces.remove(_seenNonces.first);
     _lastAcceptedAt[from] = now;
 
+    // First fix from this contact starts their state clock.
+    _contactMoving.putIfAbsent(from, () => false);
+    _contactMovingSince.putIfAbsent(from, () => now);
     final prev = _contactLocations[from];
     final loc = <String, dynamic>{
       'lat': lat,
@@ -410,8 +418,6 @@ class VeilidService {
     _contactLocations[from] = loc;
     // Detect movement transitions ("started moving" / "stopped").
     if (prev != null) _detectMovement(from, prev, lat, lng, now);
-    // Record the sender's trail to device-local history (best-effort).
-    _recordHistory(from, lat, lng);
   }
 
   static const int _locationProtocolVersion = 2;
@@ -571,15 +577,6 @@ class VeilidService {
         '[Veilid] dropped $_rejectedMessages message(s); last reason: $reason');
   }
 
-  void _recordHistory(String address, double lat, double lng) {
-    final repo = _historyRepo;
-    if (repo == null) return;
-    // Fire-and-forget; a keychain/DB hiccup must not break location delivery.
-    unawaited(repo.addLocationPoint(address, lat, lng).catchError((Object e) {
-      debugPrint('[Veilid] history record failed for ${_maskAddress(address)}: $e');
-    }));
-  }
-
   /// Compare a new fix to the previous one and emit a movement alert on a
   /// moving <-> stationary transition.
   ///
@@ -595,14 +592,21 @@ class VeilidService {
     if (prevLat == null || prevLng == null || prevTs is! DateTime) return;
     final dt = now.difference(prevTs).inSeconds;
     if (dt <= 0) return;
-    // A long gap (app asleep, reboot) says nothing about continuous movement.
-    if (dt > 300) {
-      _contactMovingStreak[address] = 0;
-      return;
-    }
     final meters = Geolocator.distanceBetween(prevLat, prevLng, lat, lng);
     final speed = meters / dt;
     final wasMoving = _contactMoving[address] ?? false;
+    // A long gap (app asleep, reboot, sparse stationary updates) says nothing
+    // about continuous movement. It does tell us the contact was not driving
+    // quickly over that gap, so a moving contact can still be marked stopped.
+    if (dt > 300) {
+      _contactMovingStreak[address] = 0;
+      if (wasMoving && speed < _moveExitMps) {
+        _contactMoving[address] = false;
+        _contactMovingSince[address] = now;
+        _recordMovementAlert(address, now, false);
+      }
+      return;
+    }
 
     // Hysteresis: harder to start than to keep going.
     final threshold = wasMoving ? _moveExitMps : _moveEnterMps;
@@ -620,6 +624,7 @@ class VeilidService {
 
     _contactMovingStreak[address] = 0;
     _contactMoving[address] = !wasMoving;
+    _contactMovingSince[address] = now;
     _recordMovementAlert(address, now, !wasMoving);
   }
 
@@ -813,17 +818,6 @@ class VeilidService {
     _contactsChangedController.add(null);
   }
 
-  /// Record my own location to the device-local trail (keyed by my address).
-  /// Best-effort; the repo throttles points internally.
-  Future<void> recordMyLocation(double lat, double lng) async {
-    final repo = _historyRepo;
-    if (repo == null) return;
-    final address = await myAddress();
-    unawaited(repo.addLocationPoint(address, lat, lng).catchError((Object e) {
-      debugPrint('[Veilid] my history record failed: $e');
-    }));
-  }
-
   /// Look up a contact's current route blob from their DHT record and import
   /// it, returning the route id to send on.
   Future<RouteId> _importContactRoute(String address) async {
@@ -984,6 +978,7 @@ class VeilidService {
     _contactLocations.remove(address);
     _contactMoving.remove(address);
     _contactMovingStreak.remove(address);
+    _contactMovingSince.remove(address);
     _lastAcceptedAt.remove(address);
     _keyLookupAttemptedAt.remove(address);
 
@@ -991,7 +986,6 @@ class VeilidService {
     await _persistPaused();
     await _persistContactNames();
     await _persistContactKeys();
-    await _historyRepo?.deleteAddressHistory(address);
 
     // Drop the imported route so the capability dies with the contact, and
     // release the DHT record handle we were holding open.
@@ -1046,8 +1040,6 @@ class VeilidService {
       try {
         await context.closeDHTRecord(oldKey);
       } catch (_) {}
-      // The trail stored under the retired address is now unreachable.
-      await _historyRepo?.deleteAddressHistory(oldKey.toString());
     }
 
     // Rotate the identity keypair as well. In this Veilid version the record
@@ -1075,33 +1067,4 @@ class VeilidService {
   /// Contact addresses (DHT record key strings), as stored.
   List<String> get contactAddresses => List.unmodifiable(_contactAddresses);
 
-  /// Attach the device-local location history repo so received contact
-  /// locations are recorded as trails. Called once at boot.
-  void attachHistoryRepo(LocationHistoryRepository repo) {
-    _historyRepo = repo;
-  }
-
-  /// Emits the address of a trail that just gained a point, after the write,
-  /// so the map can refresh polylines promptly. Null when no repo is attached.
-  Stream<String>? get historyUpdates => _historyRepo?.historyUpdates;
-
-  /// Load the recorded trails (location points) for my own address and every
-  /// contact, keyed by address. Empty when the history repo isn't wired up.
-  Future<Map<String, List<LocationPoint>>> loadTrails() async {
-    final repo = _historyRepo;
-    if (repo == null) return {};
-    final addresses = [..._contactAddresses];
-    final mine = await myAddress();
-    if (!addresses.contains(mine)) addresses.add(mine);
-    final histories = await repo.getLocationHistoriesForAddresses(addresses);
-    return histories.map((address, h) => MapEntry(address, h.points));
-  }
-
-  /// The recorded location trail for a single [address] (newest last).
-  Future<List<LocationPoint>> contactTrail(String address) async {
-    final repo = _historyRepo;
-    if (repo == null) return const [];
-    final history = await repo.getLocationHistory(address);
-    return history?.points ?? const [];
-  }
 }
