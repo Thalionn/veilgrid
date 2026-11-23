@@ -16,6 +16,7 @@ import 'package:grid_frontend/services/battery_guard.dart';
 import 'package:grid_frontend/services/map_data_saver.dart';
 import 'package:grid_frontend/services/places_service.dart';
 import 'package:grid_frontend/services/place_alert_service.dart';
+import 'package:grid_frontend/services/activity_store.dart';
 import 'package:grid_frontend/screens/home_screen.dart';
 
 Future<void> main() async {
@@ -41,7 +42,8 @@ Future<void> main() async {
     BatteryGuard.instance.start();
     MapDataSaver.instance.start();
     unawaited(PlacesService.instance.load());
-    PlaceAlertService.instance.start();
+    unawaited(PlaceAlertService.instance.start());
+    unawaited(ActivityStore.instance.start());
   });
 }
 

@@ -9,6 +9,7 @@ import 'package:grid_frontend/screens/map/grid_map_style.dart';
 import 'package:grid_frontend/screens/battery_settings_screen.dart';
 import 'package:grid_frontend/screens/veilid_scan_screen.dart';
 import 'package:grid_frontend/services/veilid_service.dart';
+import 'package:grid_frontend/services/contact_situation.dart';
 import 'package:grid_frontend/services/location_manager.dart';
 import 'package:grid_frontend/services/places_service.dart';
 import 'package:grid_frontend/services/map_data_saver.dart';
@@ -377,35 +378,29 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     _openContact(address);
   }
 
-  void _openContact(String address) {
-    showModalBottomSheet(
+  Future<void> _openContact(String address) async {
+    await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => ContactDetailSheet(address: address),
-    ).then((_) => setState(() {}));
+    );
+    if (mounted) setState(() {});
   }
 
-  void _openContactSheet() {
-    showModalBottomSheet(
+  Future<void> _openContactSheet() async {
+    final address = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _MapContactSheet(onJumpTo: _jumpToContact),
-    ).then((_) => setState(() {}));
-  }
-
-  /// Center the camera on a contact's latest location.
-  Future<void> _jumpToContact(String address) async {
-    final controller = _controller;
-    final loc = VeilidService.instance.contactLocations[address];
-    if (controller == null || loc == null) return;
-    final lat = (loc['lat'] as num?)?.toDouble();
-    final lng = (loc['lng'] as num?)?.toDouble();
-    if (lat == null || lng == null) return;
-    await controller.moveCamera(CameraUpdate.newCameraPosition(
-      CameraPosition(target: LatLng(lat, lng), zoom: 15),
-    ));
+      builder: (_) => const _MapContactSheet(),
+    );
+    if (!mounted) return;
+    if (address != null) {
+      await _openContact(address);
+    } else {
+      setState(() {});
+    }
   }
 
   Future<void> _sendLocation() async {
@@ -618,9 +613,7 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
 /// Slide-up contact sheet over the map: list + add. Tapping a contact jumps
 /// the map camera to their latest location.
 class _MapContactSheet extends StatefulWidget {
-  const _MapContactSheet({required this.onJumpTo});
-
-  final void Function(String address) onJumpTo;
+  const _MapContactSheet();
 
   @override
   State<_MapContactSheet> createState() => _MapContactSheetState();
@@ -634,6 +627,20 @@ class _MapContactSheetState extends State<_MapContactSheet> {
 
   String _displayName(String address) {
     return VeilidService.instance.getContactName(address) ?? _short(address);
+  }
+
+  Widget _contactRow(BuildContext context, String address) {
+    final situation = contactSituationFor(address);
+    final paused = VeilidService.instance.isContactPaused(address);
+    return GridContactRow(
+      name: _displayName(address),
+      handle: address,
+      placeLine: situation?.placeLine,
+      timeText: situation?.durationLabel,
+      statusLabel: paused ? 'PAUSED' : 'LINKED',
+      statusKind: paused ? GridStatusKind.paused : GridStatusKind.live,
+      onTap: () => Navigator.of(context).pop(address),
+    );
   }
 
   Future<void> _openScan() async {
@@ -674,22 +681,7 @@ class _MapContactSheetState extends State<_MapContactSheet> {
                     style: Theme.of(context).textTheme.bodySmall),
               )
             else
-              for (final address in contacts)
-                GridContactRow(
-                  name: _displayName(address),
-                  handle: address,
-                  statusLabel:
-                      VeilidService.instance.isContactPaused(address)
-                          ? 'PAUSED'
-                          : 'LINKED',
-                  statusKind: VeilidService.instance.isContactPaused(address)
-                      ? GridStatusKind.paused
-                      : GridStatusKind.live,
-                  onTap: () {
-                    Navigator.of(context).pop();
-                    widget.onJumpTo(address);
-                  },
-                ),
+              for (final address in contacts) _contactRow(context, address),
           ],
         ),
       ),

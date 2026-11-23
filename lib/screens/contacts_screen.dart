@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:grid_frontend/services/contact_situation.dart';
+import 'package:grid_frontend/services/places_service.dart';
 import 'package:grid_frontend/services/veilid_service.dart';
 import 'package:grid_frontend/screens/veilid_scan_screen.dart';
 import 'package:grid_frontend/widgets/grid/grid_avatar.dart';
@@ -24,6 +26,8 @@ class ContactsScreen extends StatefulWidget {
 class _ContactsScreenState extends State<ContactsScreen> {
   String? _address;
   late final StreamSubscription<void> _contactsSub;
+  StreamSubscription<Map<String, dynamic>>? _locationSub;
+  DateTime _lastLiveRefresh = DateTime.fromMillisecondsSinceEpoch(0);
   bool _active = true;
 
   @override
@@ -45,12 +49,43 @@ class _ContactsScreenState extends State<ContactsScreen> {
       if (!_active || !mounted) return;
       setState(() {});
     });
+    _locationSub = VeilidService.instance.locationUpdates.listen((_) {
+      if (!_active || !mounted) return;
+      // "At Work · 2h" only needs an occasional refresh, not one per fix.
+      final now = DateTime.now();
+      if (now.difference(_lastLiveRefresh).inSeconds < 3) return;
+      _lastLiveRefresh = now;
+      setState(() {});
+    });
+    PlacesService.instance.addListener(_onPlacesChanged);
+  }
+
+  void _onPlacesChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
     _contactsSub.cancel();
+    _locationSub?.cancel();
+    PlacesService.instance.removeListener(_onPlacesChanged);
     super.dispose();
+  }
+
+  Widget _contactRow(String address) {
+    final situation = contactSituationFor(address);
+    final paused = VeilidService.instance.isContactPaused(address);
+    return GridContactRow(
+      name: _displayName(address),
+      handle: address,
+      placeLine: situation?.placeLine,
+      timeText: situation?.durationLabel,
+      statusLabel: paused ? 'PAUSED' : 'LINKED',
+      statusKind: paused ? GridStatusKind.paused : GridStatusKind.live,
+      avatarStatus: GridAvatarStatus.idle,
+      showDivider: true,
+      onTap: () => _openContact(address),
+    );
   }
 
   Future<void> _loadAddress() async {
@@ -174,21 +209,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
                   style: theme.textTheme.bodySmall),
             )
           else
-            for (final address in contacts)
-              GridContactRow(
-                name: _displayName(address),
-                handle: address,
-                statusLabel:
-                    VeilidService.instance.isContactPaused(address)
-                        ? 'PAUSED'
-                        : 'LINKED',
-                statusKind: VeilidService.instance.isContactPaused(address)
-                    ? GridStatusKind.paused
-                    : GridStatusKind.live,
-                avatarStatus: GridAvatarStatus.idle,
-                showDivider: true,
-                onTap: () => _openContact(address),
-              ),
+            for (final address in contacts) _contactRow(address),
         ],
       ),
     );

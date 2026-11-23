@@ -1,7 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:grid_frontend/services/contact_situation.dart';
 import 'package:grid_frontend/services/location_manager.dart';
-import 'package:grid_frontend/services/places_service.dart';
 import 'package:grid_frontend/services/units_controller.dart';
 import 'package:grid_frontend/styles/grid_colors.dart';
 import 'package:grid_frontend/services/veilid_service.dart';
@@ -22,11 +24,26 @@ class ContactDetailSheet extends StatefulWidget {
 
 class _ContactDetailSheetState extends State<ContactDetailSheet> {
   bool _paused = false;
+  StreamSubscription<Map<String, dynamic>>? _locationSub;
+  DateTime _lastRefresh = DateTime.fromMillisecondsSinceEpoch(0);
 
   @override
   void initState() {
     super.initState();
     _paused = VeilidService.instance.isContactPaused(widget.address);
+    _locationSub = VeilidService.instance.locationUpdates.listen((_) {
+      if (!mounted) return;
+      final now = DateTime.now();
+      if (now.difference(_lastRefresh).inSeconds < 2) return;
+      _lastRefresh = now;
+      setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _locationSub?.cancel();
+    super.dispose();
   }
 
   String get _short {
@@ -67,51 +84,20 @@ class _ContactDetailSheetState extends State<ContactDetailSheet> {
     if (mounted) setState(() {});
   }
 
-  /// "just now", "40m", "2h 15m": Life360-style elapsed time, so a long stay
-  /// does not turn into a confusing "135m".
-  static String _formatDwell(Duration d) {
-    if (d.inMinutes < 1) return 'just now';
-    final hours = d.inHours;
-    final minutes = d.inMinutes % 60;
-    if (hours == 0) return '${minutes}m';
-    return minutes == 0 ? '${hours}h' : '${hours}h ${minutes}m';
-  }
-
   @override
   Widget build(BuildContext context) {
     final loc = VeilidService.instance.contactLocations[widget.address];
     final c = context.gridColors;
-    final motion = VeilidService.instance.contactMotion(widget.address);
+    final situation = contactSituationFor(widget.address);
     String? status;
     IconData? statusIcon;
-    if (motion != null) {
-      if (motion['moving'] == true) {
-        status = 'Driving';
-        statusIcon = Icons.directions_car;
-      } else {
-        final since = motion['since'] as DateTime?;
-        String? placeName;
-        final lat = (loc?['lat'] as num?)?.toDouble();
-        final lng = (loc?['lng'] as num?)?.toDouble();
-        if (lat != null && lng != null) {
-          for (final place in PlacesService.instance.places) {
-            if (Geolocator.distanceBetween(
-                    place.latitude, place.longitude, lat, lng) <=
-                place.radiusMeters) {
-              placeName = place.name;
-              break;
-            }
-          }
-        }
-        final forText = since == null
-            ? ''
-            : _formatDwell(DateTime.now().difference(since));
-        status = placeName != null
-            ? 'At $placeName · $forText'
-            : 'Stationary · $forText';
-        statusIcon =
-            placeName != null ? Icons.place_outlined : Icons.pause_circle_outline;
-      }
+    if (situation != null) {
+      status = situation.fullLabel;
+      statusIcon = situation.moving
+          ? Icons.directions_car
+          : situation.placeName != null
+              ? Icons.place_outlined
+              : Icons.pause_circle_outline;
     }
 
     String? lastSeen;

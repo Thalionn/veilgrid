@@ -36,6 +36,15 @@ class PlacesService extends ChangeNotifier {
     await _save();
   }
 
+  Future<void> update(Place updated) async {
+    final index = _places.indexWhere((p) => p.id == updated.id);
+    if (index < 0) return;
+    final next = List<Place>.from(_places);
+    next[index] = updated;
+    _places = next;
+    await _save();
+  }
+
   Future<void> remove(String id) async {
     _places = _places.where((p) => p.id != id).toList();
     await _save();

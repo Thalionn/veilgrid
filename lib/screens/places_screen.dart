@@ -3,18 +3,17 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:grid_frontend/models/place.dart';
 import 'package:grid_frontend/services/location_manager.dart';
-import 'package:grid_frontend/services/place_alert_service.dart';
 import 'package:grid_frontend/services/place_presence.dart';
 import 'package:grid_frontend/services/places_service.dart';
 import 'package:grid_frontend/services/units_controller.dart';
 import 'package:grid_frontend/services/veilid_service.dart';
 import 'package:grid_frontend/styles/grid_colors.dart';
+import 'package:grid_frontend/widgets/grid/edit_place_dialog.dart';
 import 'package:grid_frontend/widgets/grid/grid_button.dart';
 import 'package:grid_frontend/widgets/grid/place_search_sheet.dart';
 import 'package:grid_frontend/widgets/grid/tab_active.dart';
 
-/// "Places" tab: saved places (who's currently there) plus an activity feed of
-/// movement and place arrival/departure alerts, modeled on Life360.
+/// "Places" tab: saved places, who is currently inside, and place editing.
 class PlacesScreen extends StatefulWidget {
   const PlacesScreen({super.key});
 
@@ -23,10 +22,8 @@ class PlacesScreen extends StatefulWidget {
 }
 
 class _PlacesScreenState extends State<PlacesScreen> {
-  StreamSubscription<MovementAlert>? _alertSub;
-  StreamSubscription<PlaceAlert>? _placeAlertSub;
-  StreamSubscription<Map<String, dynamic>>? _locSub;
-  DateTime _lastLocationRebuild = DateTime.fromMillisecondsSinceEpoch(0);
+  StreamSubscription<Map<String, dynamic>>? _locationSub;
+  DateTime _lastPresenceRefresh = DateTime.fromMillisecondsSinceEpoch(0);
   bool _active = true;
 
   @override
@@ -43,31 +40,18 @@ class _PlacesScreenState extends State<PlacesScreen> {
   void initState() {
     super.initState();
     PlacesService.instance.load();
-    PlaceAlertService.instance.start();
-    _alertSub = VeilidService.instance.movementAlerts.listen((_) {
+    _locationSub = VeilidService.instance.locationUpdates.listen((_) {
       if (!_active || !mounted) return;
-      setState(() {});
-    });
-    _placeAlertSub = PlaceAlertService.instance.alerts.listen((_) {
-      if (!_active || !mounted) return;
-      setState(() {});
-    });
-    _locSub = VeilidService.instance.locationUpdates.listen((_) {
-      // Presence only needs occasional refresh; don't rebuild the whole list on
-      // every incoming fix, and skip the work entirely while hidden.
-      if (!_active) return;
       final now = DateTime.now();
-      if (!mounted || now.difference(_lastLocationRebuild).inSeconds < 5) return;
-      _lastLocationRebuild = now;
+      if (now.difference(_lastPresenceRefresh).inSeconds < 5) return;
+      _lastPresenceRefresh = now;
       setState(() {});
     });
   }
 
   @override
   void dispose() {
-    _alertSub?.cancel();
-    _placeAlertSub?.cancel();
-    _locSub?.cancel();
+    _locationSub?.cancel();
     super.dispose();
   }
 
@@ -161,6 +145,13 @@ class _PlacesScreenState extends State<PlacesScreen> {
     if (mounted) setState(() {});
   }
 
+  Future<void> _editPlace(Place place) async {
+    final updated = await showEditPlaceDialog(context, place);
+    if (updated == null) return;
+    await PlacesService.instance.update(updated);
+    if (mounted) setState(() {});
+  }
+
   Future<void> _deletePlace(Place place) async {
     await PlacesService.instance.remove(place.id);
     if (mounted) setState(() {});
@@ -170,14 +161,6 @@ class _PlacesScreenState extends State<PlacesScreen> {
   Widget build(BuildContext context) {
     final c = context.gridColors;
     final places = PlacesService.instance.places;
-    final movement = VeilidService.instance.recentAlerts;
-    final placeAlerts = PlaceAlertService.instance.recentAlerts;
-    final feed = <({DateTime at, Widget tile})>[
-      for (final a in movement)
-        if (!_suppressedByPlace(a, placeAlerts))
-          (at: a.at, tile: _alertTile(context, a)),
-      for (final a in placeAlerts) (at: a.at, tile: _placeAlertTile(context, a)),
-    ]..sort((a, b) => b.at.compareTo(a.at));
 
     return Scaffold(
       appBar: AppBar(title: const Text('Places')),
@@ -191,8 +174,16 @@ class _PlacesScreenState extends State<PlacesScreen> {
               child: Text('No places yet — search an address, or use your current location.',
                   style: TextStyle(color: c.text3, fontSize: 13)),
             )
-          else
+          else ...[
             for (final p in places) _placeTile(context, p),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
+              child: Text(
+                'Tap a place to edit its name, radius or position.',
+                style: TextStyle(color: c.text3, fontSize: 12),
+              ),
+            ),
+          ],
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
             child: GridButton(
@@ -202,16 +193,6 @@ class _PlacesScreenState extends State<PlacesScreen> {
               onPressed: _openAddPlace,
             ),
           ),
-          const SizedBox(height: 16),
-          _section(c, 'Activity'),
-          if (feed.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-              child: Text('No activity yet.',
-                  style: TextStyle(color: c.text3, fontSize: 13)),
-            )
-          else
-            for (final item in feed.take(20)) item.tile,
         ],
       ),
     );
@@ -228,61 +209,13 @@ class _PlacesScreenState extends State<PlacesScreen> {
       title: Text(place.name),
       subtitle: Text('${who} · within ${formatDistance(place.radiusMeters, rounded: true)}'),
       isThreeLine: false,
+      onTap: () => _editPlace(place),
       trailing: IconButton(
         icon: const Icon(Icons.close, size: 18),
         tooltip: 'Remove place',
         onPressed: () => _deletePlace(place),
       ),
     );
-  }
-
-  /// A "stopped" movement alert right next to an arrival at the same place is
-  /// redundant; the place alert carries more information.
-  bool _suppressedByPlace(MovementAlert a, List<PlaceAlert> places) {
-    if (a.moving) return false;
-    return places.any((p) =>
-        p.arrived &&
-        p.address == a.address &&
-        p.at.difference(a.at).inSeconds.abs() < 120);
-  }
-
-  Widget _placeAlertTile(BuildContext context, PlaceAlert a) {
-    final c = context.gridColors;
-    return ListTile(
-      dense: true,
-      leading: Icon(
-        a.arrived ? Icons.place : Icons.directions_walk,
-        color: a.arrived ? c.mint : c.text3,
-        size: 20,
-      ),
-      title: Text(
-          '${_name(a.address)} ${a.arrived ? 'arrived at' : 'left'} ${a.placeName}'),
-      subtitle: Text(_timeAgo(a.at),
-          style: TextStyle(fontSize: 11, color: c.text3)),
-    );
-  }
-
-  Widget _alertTile(BuildContext context, MovementAlert a) {
-    final c = context.gridColors;
-    final ago = _timeAgo(a.at);
-    return ListTile(
-      dense: true,
-      leading: Icon(
-        a.moving ? Icons.directions_run : Icons.pause_circle_outline,
-        color: a.moving ? c.mint : c.text3,
-        size: 20,
-      ),
-      title: Text('${_name(a.address)} ${a.moving ? 'started moving' : 'stopped'}'),
-      subtitle: Text(ago, style: TextStyle(fontSize: 11, color: c.text3)),
-    );
-  }
-
-  String _timeAgo(DateTime t) {
-    final d = DateTime.now().difference(t);
-    if (d.inSeconds < 60) return 'just now';
-    if (d.inMinutes < 60) return '${d.inMinutes}m ago';
-    if (d.inHours < 24) return '${d.inHours}h ago';
-    return '${d.inDays}d ago';
   }
 
   Widget _section(GridColors c, String label) {
