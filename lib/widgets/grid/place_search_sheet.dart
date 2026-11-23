@@ -25,9 +25,10 @@ class PlaceSelection {
 /// Bottom sheet for adding a place by searching an address/place name, or by
 /// using the current position. Pops a [PlaceSelection].
 class PlaceSearchSheet extends StatefulWidget {
-  const PlaceSearchSheet({super.key, this.myLocation});
+  const PlaceSearchSheet({super.key, this.myLocation, this.title = 'Add a place'});
 
   final LatLng? myLocation;
+  final String title;
 
   @override
   State<PlaceSearchSheet> createState() => _PlaceSearchSheetState();
@@ -112,7 +113,7 @@ class _PlaceSearchSheetState extends State<PlaceSearchSheet> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
                 child: GridSheetHeader(
-                  title: 'Add a place',
+                  title: widget.title,
                   onClose: () => Navigator.of(context).pop(),
                 ),
               ),

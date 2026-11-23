@@ -879,6 +879,7 @@ class VeilidService {
     await _persistContactNames();
     await _persistContactNicknames();
     _contactsChangedController.add(null);
+    if (trimmed.isEmpty) unawaited(refreshContactNames());
   }
 
   Future<void> _persistContactNicknames() async {

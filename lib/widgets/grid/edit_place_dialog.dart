@@ -110,6 +110,7 @@ Future<Place?> showEditPlaceDialog(BuildContext context, Place place) async {
                       backgroundColor: Colors.transparent,
                       builder: (_) => PlaceSearchSheet(
                         myLocation: LocationManager.instance.currentLatLng,
+                        title: 'Change place location',
                       ),
                     );
                     if (selection == null) return;
