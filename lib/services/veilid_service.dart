@@ -69,6 +69,8 @@ class VeilidService {
   static const _myRecordOwnerPrefKey = 'veilid_my_record_owner';
   static const _myNamePrefKey = 'veilid_display_name';
   static const _contactNamesPrefKey = 'veilid_contact_names';
+  static const _contactNicknamesPrefKey = 'veilid_contact_nicknames';
+  static const _nicknamesMigratedPrefKey = 'veilid_contact_nicknames_migrated';
   static const _contactKeysPrefKey = 'veilid_contact_public_keys';
   // User-secret key (Veilid protected store) for the identity keypair.
   static const _myKeyPairSecretKey = 'grid_identity_keypair';
@@ -77,6 +79,9 @@ class VeilidService {
   // assigned to contacts (address -> name).
   String? _myName;
   final Map<String, String> _contactNames = {};
+  final Set<String> _contactNicknames = {};
+  bool _refreshingNames = false;
+  bool _nicknamesMigrated = false;
 
 
   // My current route id, so a RouteChange update can tell when it died.
@@ -256,6 +261,17 @@ class VeilidService {
           ..clear()
           ..addAll(map.map((k, v) => MapEntry(k, v as String)));
       } catch (_) {}
+    }
+    final nicknames = prefs.getStringList(_contactNicknamesPrefKey);
+    _contactNicknames
+      ..clear()
+      ..addAll(nicknames ?? const <String>[]);
+    _nicknamesMigrated =
+        prefs.getBool(_nicknamesMigratedPrefKey) ?? false;
+    if (!_nicknamesMigrated) {
+      // First run with nickname tracking: a stored name equal to the published
+      // name was auto-filled; one that differs is a user nickname.
+      _contactNicknames.clear();
     }
 
     // Restore pinned identity keys for contacts we already verified.
@@ -842,6 +858,9 @@ class VeilidService {
     } catch (e) {
       debugPrint('[Veilid] publish name failed (non-fatal): $e');
     }
+    // Profile messages update contacts immediately even before their next DHT
+    // refresh check.
+    unawaited(sendProfile());
   }
 
   /// The local display name I've assigned to a contact, or null.
@@ -852,16 +871,74 @@ class VeilidService {
     final trimmed = name.trim();
     if (trimmed.isEmpty) {
       _contactNames.remove(address);
+      _contactNicknames.remove(address);
     } else {
       _contactNames[address] = trimmed;
+      _contactNicknames.add(address);
     }
-    final prefs = await SharedPreferences.getInstance();
-    if (_contactNames.isEmpty) {
-      await prefs.remove(_contactNamesPrefKey);
-    } else {
-      await prefs.setString(_contactNamesPrefKey, jsonEncode(_contactNames));
-    }
+    await _persistContactNames();
+    await _persistContactNicknames();
     _contactsChangedController.add(null);
+  }
+
+  Future<void> _persistContactNicknames() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (_contactNicknames.isEmpty) {
+      await prefs.remove(_contactNicknamesPrefKey);
+    } else {
+      await prefs.setStringList(
+          _contactNicknamesPrefKey, _contactNicknames.toList());
+    }
+  }
+
+  /// Re-reads each contact's published name. A locally set nickname always
+  /// wins; otherwise the displayed name follows the published one.
+  Future<void> refreshContactNames() async {
+    if (_refreshingNames) return;
+    _refreshingNames = true;
+    try {
+      await _ensureStarted();
+      if (!_nicknamesMigrated) {
+        _nicknamesMigrated = true;
+        for (final address in List<String>.from(_contactAddresses)) {
+          final stored = _contactNames[address];
+          if (stored == null || stored.isEmpty) continue;
+          try {
+            final published =
+                await _readContactName(address, forceRefresh: true);
+            if (published != null &&
+                published.isNotEmpty &&
+                published != stored) {
+              _contactNicknames.add(address);
+            }
+          } catch (_) {}
+        }
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool(_nicknamesMigratedPrefKey, true);
+        await _persistContactNicknames();
+      }
+      var changed = false;
+      for (final address in List<String>.from(_contactAddresses)) {
+        if (_contactNicknames.contains(address)) continue;
+        try {
+          final published =
+              await _readContactName(address, forceRefresh: true);
+          if (published == null || published.isEmpty) continue;
+          if (_contactNames[address] != published) {
+            _contactNames[address] = published;
+            changed = true;
+          }
+        } catch (_) {
+          // Offline contact: keep the last known name.
+        }
+      }
+      if (changed) {
+        await _persistContactNames();
+        _contactsChangedController.add(null);
+      }
+    } finally {
+      _refreshingNames = false;
+    }
   }
 
   /// Look up a contact's current route blob from their DHT record and import
@@ -892,8 +969,11 @@ class VeilidService {
     _contactRouteResolvedAt[address] = DateTime.now();
     // Pull the contact's published name as a default (best-effort).
     try {
-      final name = await _readContactName(address);
-      if (name != null && name.isNotEmpty && !_contactNames.containsKey(address)) {
+      final name = await _readContactName(address, forceRefresh: true);
+      if (name != null &&
+          name.isNotEmpty &&
+          !_contactNicknames.contains(address) &&
+          _contactNames[address] != name) {
         _contactNames[address] = name;
         await _persistContactNames();
       }
@@ -906,11 +986,13 @@ class VeilidService {
     unawaited(sendProfile(to: address));
   }
 
-  Future<String?> _readContactName(String address) async {
+  Future<String?> _readContactName(String address,
+      {bool forceRefresh = false}) async {
     final recordKey = RecordKey.fromString(address);
     final context = _routingContext!;
     await context.openDHTRecord(recordKey);
-    final value = await context.getDHTValue(recordKey, 1);
+    final value =
+        await context.getDHTValue(recordKey, 1, forceRefresh: forceRefresh);
     if (value == null || value.data.isEmpty) return null;
     return utf8.decode(value.data);
   }
@@ -1074,6 +1156,13 @@ class VeilidService {
       }
       _seenNonces.add(nonce);
       if (_seenNonces.length > 512) _seenNonces.remove(_seenNonces.first);
+      if (name.isNotEmpty &&
+          !_contactNicknames.contains(from) &&
+          _contactNames[from] != name) {
+        _contactNames[from] = name;
+        await _persistContactNames();
+        _contactsChangedController.add(null);
+      }
       if (avatar != null) {
         await AvatarStore.instance.setContactAvatar(from, avatar);
       }
@@ -1251,6 +1340,7 @@ class VeilidService {
     _contactAddresses.remove(address);
     _pausedAddresses.remove(address);
     _contactNames.remove(address);
+    _contactNicknames.remove(address);
     _contactPublicKeys.remove(address);
     _contactLocations.remove(address);
     _contactMoving.remove(address);
@@ -1263,6 +1353,7 @@ class VeilidService {
     await _persistContacts();
     await _persistPaused();
     await _persistContactNames();
+    await _persistContactNicknames();
     await _persistContactKeys();
 
     // Drop the imported route so the capability dies with the contact, and

@@ -4,6 +4,7 @@ import 'package:grid_frontend/models/place.dart';
 import 'package:grid_frontend/services/location_manager.dart';
 import 'package:grid_frontend/services/map_preferences.dart';
 import 'package:grid_frontend/services/units_controller.dart';
+import 'package:grid_frontend/widgets/grid/place_search_sheet.dart';
 
 /// Rename a saved place, resize its radius, or move it to the current fix.
 /// Returns the edited place, or null when cancelled.
@@ -15,6 +16,7 @@ Future<Place?> showEditPlaceDialog(BuildContext context, Place place) async {
   bool moved = false;
   bool visible = place.visible;
   String? color = place.color;
+  String? selectionNote;
 
   final result = await showDialog<Place>(
     context: context,
@@ -99,7 +101,45 @@ Future<Place?> showEditPlaceDialog(BuildContext context, Place place) async {
                       ),
                   ],
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 6),
+                TextButton.icon(
+                  onPressed: () async {
+                    final selection = await showModalBottomSheet<PlaceSelection>(
+                      context: context,
+                      isScrollControlled: true,
+                      backgroundColor: Colors.transparent,
+                      builder: (_) => PlaceSearchSheet(
+                        myLocation: LocationManager.instance.currentLatLng,
+                      ),
+                    );
+                    if (selection == null) return;
+                    setDialogState(() {
+                      latitude = selection.latitude;
+                      longitude = selection.longitude;
+                      moved = false;
+                      selectionNote = selection.suggestedName ??
+                          '${selection.latitude.toStringAsFixed(5)}, '
+                              '${selection.longitude.toStringAsFixed(5)}';
+                      if (controller.text.trim().isEmpty &&
+                          selection.suggestedName != null) {
+                        controller.text = selection.suggestedName!;
+                      }
+                    });
+                  },
+                  icon: const Icon(Icons.search),
+                  label: const Text('Search for an address'),
+                ),
+                if (selectionNote != null)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 8, bottom: 4),
+                    child: Text(
+                      selectionNote!,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
                 TextButton.icon(
                   onPressed: me == null
                       ? null
@@ -107,6 +147,7 @@ Future<Place?> showEditPlaceDialog(BuildContext context, Place place) async {
                             latitude = me.latitude;
                             longitude = me.longitude;
                             moved = true;
+                            selectionNote = 'Current position';
                           }),
                   icon: Icon(moved
                       ? Icons.check_circle_outline

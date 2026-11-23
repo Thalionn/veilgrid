@@ -46,7 +46,10 @@ class _ContactsScreenState extends State<ContactsScreen> {
     _active = active;
     // The list may have changed while this tab was hidden (e.g. linking from
     // the map's contact sheet).
-    if (_active) setState(() {});
+    if (_active) {
+      setState(() {});
+      unawaited(VeilidService.instance.refreshContactNames());
+    }
   }
 
   @override

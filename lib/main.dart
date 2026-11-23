@@ -96,6 +96,7 @@ Future<void> _initPublish() async {
       // Avatar/name may have changed while offline; refresh contacts once the
       // route is live.
       await VeilidService.instance.sendProfile();
+      unawaited(VeilidService.instance.refreshContactNames());
       return;
     } catch (e) {
       debugPrint('[Veilid] publish attempt ${attempt + 1} failed: $e');
