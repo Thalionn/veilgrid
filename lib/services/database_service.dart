@@ -209,7 +209,7 @@ class DatabaseService {
   /// Clear all data from the database
   Future<void> clearAllData() async {
     final db = await database;
-    final tables = ['UserLocations', 'LocationHistory', 'SharingPreferences', 'MapIcons'];
+    final tables = ['UserLocations', 'SharingPreferences', 'MapIcons'];
     for (final table in tables) {
       try {
         await db.delete(table);

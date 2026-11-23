@@ -66,6 +66,16 @@ class _ContactDetailSheetState extends State<ContactDetailSheet> {
     if (mounted) setState(() {});
   }
 
+  /// "just now", "40m", "2h 15m": Life360-style elapsed time, so a long stay
+  /// does not turn into a confusing "135m".
+  static String _formatDwell(Duration d) {
+    if (d.inMinutes < 1) return 'just now';
+    final hours = d.inHours;
+    final minutes = d.inMinutes % 60;
+    if (hours == 0) return '${minutes}m';
+    return minutes == 0 ? '${hours}h' : '${hours}h ${minutes}m';
+  }
+
   @override
   Widget build(BuildContext context) {
     final loc = VeilidService.instance.contactLocations[widget.address];
@@ -92,11 +102,9 @@ class _ContactDetailSheetState extends State<ContactDetailSheet> {
             }
           }
         }
-        final minutes =
-            since == null ? null : DateTime.now().difference(since).inMinutes;
-        final forText = minutes == null
+        final forText = since == null
             ? ''
-            : (minutes < 1 ? 'just now' : '${minutes}m');
+            : _formatDwell(DateTime.now().difference(since));
         status = placeName != null
             ? 'At $placeName · $forText'
             : 'Stationary · $forText';
