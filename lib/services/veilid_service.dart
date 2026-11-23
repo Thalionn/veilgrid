@@ -906,12 +906,16 @@ class VeilidService {
           try {
             final published =
                 await _readContactName(address, forceRefresh: true);
-            if (published != null &&
-                published.isNotEmpty &&
+            if (published == null ||
+                published.isEmpty ||
                 published != stored) {
+              // Offline or different: preserve the local name as a nickname
+              // rather than risk overwriting a user's choice.
               _contactNicknames.add(address);
             }
-          } catch (_) {}
+          } catch (_) {
+            _contactNicknames.add(address);
+          }
         }
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool(_nicknamesMigratedPrefKey, true);
@@ -1156,6 +1160,7 @@ class VeilidService {
       }
       _seenNonces.add(nonce);
       if (_seenNonces.length > 512) _seenNonces.remove(_seenNonces.first);
+      if (!_nicknamesMigrated) await refreshContactNames();
       if (name.isNotEmpty &&
           !_contactNicknames.contains(from) &&
           _contactNames[from] != name) {
