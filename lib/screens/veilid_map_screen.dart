@@ -10,6 +10,7 @@ import 'package:grid_frontend/screens/battery_settings_screen.dart';
 import 'package:grid_frontend/screens/veilid_scan_screen.dart';
 import 'package:grid_frontend/services/veilid_service.dart';
 import 'package:grid_frontend/services/avatar_store.dart';
+import 'package:grid_frontend/services/avatar_visuals.dart';
 import 'package:grid_frontend/services/contact_situation.dart';
 import 'package:grid_frontend/services/location_manager.dart';
 import 'package:grid_frontend/services/map_preferences.dart';
@@ -156,6 +157,13 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     }
   }
 
+  String _contactName(String address) {
+    final n = VeilidService.instance.getContactName(address);
+    if (n != null && n.isNotEmpty) return n;
+    final parts = address.split(':');
+    return parts.length >= 2 ? parts[1] : address;
+  }
+
   Future<void> _refreshMarkersNow(MapLibreMapController controller) async {
 
     // Your position (blue). Updated in place instead of removed and re-added.
@@ -189,46 +197,39 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
       if (lat == null || lng == null || !isFiniteLatLng(lat, lng)) continue;
       seen.add(entry.key);
       final avatar = AvatarStore.instance.avatarFor(entry.key);
+      final String imageId;
       if (avatar != null) {
-        final imageId =
-            'avatar_${entry.key.hashCode}_${avatar.hashCode}';
+        imageId = 'avatar_${entry.key.hashCode}_${avatar.hashCode}';
         if (_avatarImages.add(imageId)) {
           await controller.addImage(imageId, avatar);
         }
-        final options = SymbolOptions(
-          geometry: LatLng(lat, lng),
-          iconImage: imageId,
-          iconSize: 0.55,
-          iconAnchor: 'center',
-        );
-        final existing = _contactSymbols[entry.key];
-        if (existing == null) {
-          _contactSymbols[entry.key] =
-              await controller.addSymbol(options, {'address': entry.key});
-        } else {
-          await controller.updateSymbol(existing, options);
-        }
-        final circle = _contactCircles.remove(entry.key);
-        if (circle != null) await controller.removeCircle(circle);
-        continue;
-      }
-      final symbol = _contactSymbols.remove(entry.key);
-      if (symbol != null) await controller.removeSymbol(symbol);
-      final options = CircleOptions(
-        geometry: LatLng(lat, lng),
-        circleRadius: 7.0,
-        circleColor: '#f59e0b',
-        circleOpacity: 1.0,
-        circleStrokeWidth: 2.0,
-        circleStrokeColor: '#ffffff',
-      );
-      final existing = _contactCircles[entry.key];
-      if (existing == null) {
-        _contactCircles[entry.key] =
-            await controller.addCircle(options, {'address': entry.key});
       } else {
-        await controller.updateCircle(existing, options);
+        final name = _contactName(entry.key);
+        final initials = initialsFor(name);
+        imageId = 'badge_${entry.key.hashCode}_${initials}_'
+            '${avatarColorFor(name).value}';
+        if (_avatarImages.add(imageId)) {
+          await controller.addImage(
+            imageId,
+            await renderInitialsBadge(initials, name: name),
+          );
+        }
       }
+      final options = SymbolOptions(
+        geometry: LatLng(lat, lng),
+        iconImage: imageId,
+        iconSize: 0.8,
+        iconAnchor: 'center',
+      );
+      final existing = _contactSymbols[entry.key];
+      if (existing == null) {
+        _contactSymbols[entry.key] =
+            await controller.addSymbol(options, {'address': entry.key});
+      } else {
+        await controller.updateSymbol(existing, options);
+      }
+      final circle = _contactCircles.remove(entry.key);
+      if (circle != null) await controller.removeCircle(circle);
     }
     // Drop markers for contacts that were removed.
     for (final address in _contactCircles.keys.toList()) {

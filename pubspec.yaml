@@ -1,7 +1,7 @@
 name: grid_frontend
 description: "VeilGrid: private, serverless location sharing over Veilid"
 publish_to: 'none'
-version: 2.3.9+2012
+version: 2.3.10+2013
 environment:
   sdk: '>=3.3.3 <4.0.0'
 
