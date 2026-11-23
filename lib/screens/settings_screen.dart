@@ -381,7 +381,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ListTile(
             title: const Text('Units'),
             subtitle: Text(
-                'Distances and speeds in ${system.label.toLowerCase()} (${system.detail})'),
+                'Distances in ${system.label.toLowerCase()} (${system.detail})'),
             trailing: DropdownButton<MeasurementSystem>(
               value: system,
               underline: const SizedBox.shrink(),

@@ -3,8 +3,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 /// One switch for every distance and speed shown in the app.
 enum MeasurementSystem {
-  imperial('Miles', 'ft · mi · mph'),
-  metric('Kilometers', 'm · km · km/h');
+  imperial('Miles', 'ft · mi'),
+  metric('Kilometers', 'm · km');
 
   const MeasurementSystem(this.label, this.detail);
   final String label;
