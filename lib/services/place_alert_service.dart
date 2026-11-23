@@ -12,10 +12,11 @@ import 'package:grid_frontend/utilities/lat_lng_validation.dart';
 /// Watches incoming contact fixes and emits arrival/departure alerts for the
 /// user's saved places, à la Life360.
 ///
-/// State is in memory only: on startup the first fix for each contact seeds
-/// their inside/outside state, so opening the app does not replay arrivals
-/// for everyone already at a place. A 40 m exit slack keeps GPS jitter from
-/// producing leave/arrive pairs at the boundary.
+/// Inside/outside state is rebuilt from the latest fixes on startup and the
+/// arrival time is persisted, so an observed stay keeps its duration across
+/// restarts. The first fix for each contact only seeds state, so opening the
+/// app does not replay arrivals for everyone already at a place. A 40 m exit
+/// slack keeps GPS jitter from producing leave/arrive pairs at the boundary.
 class PlaceAlertService {
   PlaceAlertService._();
   static final PlaceAlertService instance = PlaceAlertService._();
