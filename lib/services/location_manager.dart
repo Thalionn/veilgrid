@@ -139,6 +139,8 @@ class LocationManager with ChangeNotifier {
     );
   }
 
+  DateTime? _lastPersistAt;
+
   /// The most recent fix we know of, persisted across launches. Null until
   /// the first fix ever.
   LatLng? get lastKnownLatLng => _lastKnown ?? currentLatLng;
@@ -155,7 +157,15 @@ class LocationManager with ChangeNotifier {
   void _remember(LocationUpdate fix) {
     if (!isFiniteLatLng(fix.latitude, fix.longitude)) return;
     _lastKnown = LatLng(fix.latitude, fix.longitude);
-    // Fire-and-forget: the next launch should open where we were.
+    // Fire-and-forget: the next launch should open where we were. Throttled:
+    // while driving there is a fix every few seconds, and rewriting the prefs
+    // file each time is pointless disk I/O.
+    final now = DateTime.now();
+    if (_lastPersistAt != null &&
+        now.difference(_lastPersistAt!) < const Duration(seconds: 30)) {
+      return;
+    }
+    _lastPersistAt = now;
     unawaited(SharedPreferences.getInstance().then((prefs) async {
       await prefs.setDouble('last_fix_lat', fix.latitude);
       await prefs.setDouble('last_fix_lng', fix.longitude);
