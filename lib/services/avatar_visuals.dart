@@ -37,6 +37,17 @@ String initialsFor(String name, {int count = 3}) {
   return cleaned.substring(0, n).toUpperCase();
 }
 
+/// Pixel width of an encoded image (used to keep photo markers the same
+/// rendered size as 128 px badges).
+Future<int> imagePixelWidth(Uint8List bytes) async {
+  final codec = await ui.instantiateImageCodec(bytes);
+  final frame = await codec.getNextFrame();
+  final width = frame.image.width;
+  frame.image.dispose();
+  codec.dispose();
+  return width;
+}
+
 /// Renders a circular initial badge (with a white ring) as PNG bytes for use
 /// as a MapLibre symbol image.
 Future<Uint8List> renderInitialsBadge(String initials,

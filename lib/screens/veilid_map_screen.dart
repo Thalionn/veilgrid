@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:grid_frontend/models/place.dart';
@@ -49,6 +50,8 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
   final Map<String, Circle> _contactCircles = {};
   final Map<String, Symbol> _contactSymbols = {};
   final Set<String> _avatarImages = {};
+  final Map<String, int> _avatarWidths = {};
+  final Map<String, String> _groupedAddresses = {};
   final Map<String, Symbol> _placeSymbols = {};
   final Set<String> _placeImages = {};
   Symbol? _homeSymbol;
@@ -160,6 +163,42 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     }
   }
 
+  /// A visible saved place containing the contact, when places are shown.
+  Place? _groupPlaceFor(String address, double lat, double lng) {
+    if (!MapPreferences.instance.showPlaces) return null;
+    Place? best;
+    var bestMeters = double.infinity;
+    for (final place in PlacesService.instance.places) {
+      if (!place.visible) continue;
+      if (!isFiniteLatLng(place.latitude, place.longitude)) continue;
+      final meters = Geolocator.distanceBetween(
+          place.latitude, place.longitude, lat, lng);
+      if (meters <= place.radiusMeters && meters < bestMeters) {
+        best = place;
+        bestMeters = meters;
+      }
+    }
+    return best;
+  }
+
+  /// Screen-pixel fan offsets for contacts grouped at the same place.
+  Offset? _clusterOffset(String address) {
+    final placeId = _groupedAddresses[address];
+    if (placeId == null || placeId.isEmpty) return null;
+    final peers = _groupedAddresses.entries
+        .where((e) => e.value == placeId)
+        .map((e) => e.key)
+        .toList();
+    final index = peers.indexOf(address);
+    if (index < 0) return null;
+    if (peers.length == 1) return const Offset(0, -105);
+    final angle = math.pi * (0.15 + 0.7 * index / (peers.length - 1));
+    return Offset(
+      math.cos(angle) * 110,
+      -math.sin(angle) * 110,
+    );
+  }
+
   String _contactName(String address) {
     final n = VeilidService.instance.getContactName(address);
     if (n != null && n.isNotEmpty) return n;
@@ -177,11 +216,14 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
       final label = hasName ? initialsFor(myName) : 'YOU';
       final photo = AvatarStore.instance.mine;
       final String imageId;
+      var iconScale = mapMarkerIconSize;
       if (photo != null) {
         imageId = 'me_avatar_${photo.hashCode}';
         if (_avatarImages.add(imageId)) {
           await controller.addImage(imageId, photo);
         }
+        final width = _avatarWidths[imageId] ??= await imagePixelWidth(photo);
+        if (width > 0) iconScale = mapMarkerIconSize * 128 / width;
       } else {
         imageId = 'me_badge_${label}_${avatarColorFor(myName ?? 'You').value}';
         if (_avatarImages.add(imageId)) {
@@ -194,7 +236,7 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
       final options = SymbolOptions(
         geometry: LatLng(me.latitude, me.longitude),
         iconImage: imageId,
-        iconSize: mapMarkerIconSize,
+        iconSize: iconScale,
         iconAnchor: 'center',
       );
       if (_meSymbol == null) {
@@ -209,6 +251,17 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
 
     // Contact positions (amber), tagged with their address for tap handling.
     final contacts = VeilidService.instance.contactLocations;
+    final groupedPlaces = <String, Place>{};
+    _groupedAddresses.clear();
+    for (final entry in contacts.entries) {
+      final loc = entry.value;
+      final lat = (loc['lat'] as num?)?.toDouble();
+      final lng = (loc['lng'] as num?)?.toDouble();
+      if (lat == null || lng == null || !isFiniteLatLng(lat, lng)) continue;
+      final place = _groupPlaceFor(entry.key, lat, lng);
+      _groupedAddresses[entry.key] = place?.id ?? '';
+      if (place != null) groupedPlaces[entry.key] = place;
+    }
     final seen = <String>{};
     for (final entry in contacts.entries) {
       final loc = entry.value;
@@ -216,13 +269,17 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
       final lng = (loc['lng'] as num?)?.toDouble();
       if (lat == null || lng == null || !isFiniteLatLng(lat, lng)) continue;
       seen.add(entry.key);
+      final place = groupedPlaces[entry.key];
       final avatar = AvatarStore.instance.avatarFor(entry.key);
       final String imageId;
+      var iconScale = mapMarkerIconSize;
       if (avatar != null) {
         imageId = 'avatar_${entry.key.hashCode}_${avatar.hashCode}';
         if (_avatarImages.add(imageId)) {
           await controller.addImage(imageId, avatar);
         }
+        final width = _avatarWidths[imageId] ??= await imagePixelWidth(avatar);
+        if (width > 0) iconScale = mapMarkerIconSize * 128 / width;
       } else {
         final name = _contactName(entry.key);
         final initials = initialsFor(name);
@@ -235,11 +292,16 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
           );
         }
       }
+      final grouped = place != null;
+      final offset = grouped ? _clusterOffset(entry.key) : null;
       final options = SymbolOptions(
-        geometry: LatLng(lat, lng),
+        geometry: grouped
+            ? LatLng(place.latitude, place.longitude)
+            : LatLng(lat, lng),
         iconImage: imageId,
-        iconSize: mapMarkerIconSize,
+        iconSize: iconScale,
         iconAnchor: 'center',
+        iconOffset: offset,
       );
       final existing = _contactSymbols[entry.key];
       if (existing == null) {
@@ -343,11 +405,13 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
   void _onMapPrefsChanged() {
     _refreshHome();
     _refreshPlaces();
+    _refreshMarkers();
   }
 
   void _onPlacesChanged() {
     if (!mounted || !_active) return;
     _refreshPlaces();
+    _refreshMarkers();
   }
 
   /// Saved places as translucent radius circles, sized from the current zoom
