@@ -4,7 +4,6 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:grid_frontend/models/place.dart';
 import 'package:grid_frontend/screens/map/grid_map_style.dart';
 import 'package:grid_frontend/screens/battery_settings_screen.dart';
@@ -13,6 +12,7 @@ import 'package:grid_frontend/services/veilid_service.dart';
 import 'package:grid_frontend/services/avatar_store.dart';
 import 'package:grid_frontend/services/avatar_visuals.dart';
 import 'package:grid_frontend/services/contact_situation.dart';
+import 'package:grid_frontend/services/home_place.dart';
 import 'package:grid_frontend/services/location_manager.dart';
 import 'package:grid_frontend/services/map_marker_style.dart';
 import 'package:grid_frontend/services/map_preferences.dart';
@@ -56,6 +56,7 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
   final Map<String, Symbol> _placeSymbols = {};
   final Set<String> _placeImages = {};
   Symbol? _homeSymbol;
+  Place? _homePlace;
   StreamSubscription<Map<String, dynamic>>? _locSub;
   StreamSubscription<void>? _contactsSub;
   bool _centeredOnMe = false;
@@ -106,6 +107,7 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
       setState(() {});
       _refreshMarkers();
       _refreshPlaces();
+      _refreshHome();
     });
     // The tracker's stationary interval is long (up to ~15 min), so force a
     // fresh fix on open instead of waiting for the next scheduled update.
@@ -167,11 +169,14 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
 
   /// A visible saved place containing the contact, when places are shown.
   Place? _groupPlaceFor(String address, double lat, double lng) {
-    if (!MapPreferences.instance.showPlaces) return null;
     Place? best;
     var bestMeters = double.infinity;
-    for (final place in PlacesService.instance.places) {
-      if (!place.visible) continue;
+    final candidates = <Place>[
+      if (_homePlace != null) _homePlace!,
+      if (MapPreferences.instance.showPlaces)
+        ...PlacesService.instance.places.where((p) => p.visible),
+    ];
+    for (final place in candidates) {
       if (!isFiniteLatLng(place.latitude, place.longitude)) continue;
       final meters = Geolocator.distanceBetween(
           place.latitude, place.longitude, lat, lng);
@@ -320,6 +325,7 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     if (_clusterSignature != signature) {
       _clusterSignature = signature;
       unawaited(_refreshPlaces());
+      unawaited(_refreshHome());
     }
   }
 
@@ -330,9 +336,12 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     final controller = _controller;
     if (controller == null || !_styleLoaded) return;
 
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('home_location');
-    if (raw == null || raw.isEmpty) {
+    final loadedHome = await loadHomePlace();
+    final homeChanged = _homePlace?.latitude != loadedHome?.latitude ||
+        _homePlace?.longitude != loadedHome?.longitude ||
+        _homePlace?.radiusMeters != loadedHome?.radiusMeters;
+    _homePlace = loadedHome;
+    if (loadedHome == null) {
       if (_homeAreaReady) {
         await controller.setGeoJsonSource('home_area', _emptyAreas());
       }
@@ -340,14 +349,12 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
         await controller.removeSymbol(_homeSymbol!);
         _homeSymbol = null;
       }
+      if (homeChanged) unawaited(_refreshMarkers());
       return;
     }
-    final parts = raw.split(',');
-    if (parts.length != 2) return;
-    final lat = double.tryParse(parts[0]);
-    final lng = double.tryParse(parts[1]);
-    if (lat == null || lng == null) return;
-    final radiusMeters = (prefs.get('home_radius') as num?)?.toDouble() ?? 150;
+    final lat = loadedHome.latitude;
+    final lng = loadedHome.longitude;
+    final radiusMeters = loadedHome.radiusMeters;
 
     final showRadii = MapPreferences.instance.showRadii;
     final data = _areaCollection(showRadii
@@ -373,12 +380,31 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
       await controller.setGeoJsonSource('home_area', data);
     }
 
-    final imageId = 'home_marker_22c55e';
-    if (_placeImages.add(imageId)) {
-      await controller.addImage(
-        imageId,
-        await renderPlaceMarker('home', const Color(0xFF22C55E)),
-      );
+    final members = await _peopleAtPlace(loadedHome);
+    final String imageId;
+    if (members.isEmpty) {
+      imageId = 'home_marker_22c55e';
+      if (_placeImages.add(imageId)) {
+        await controller.addImage(
+          imageId,
+          await renderPlaceMarker('home', const Color(0xFF22C55E)),
+        );
+      }
+    } else {
+      final memberKey =
+          members.map((m) => m.photo?.hashCode ?? m.initials).join(',');
+      imageId =
+          'home_cluster_${members.length}_${memberKey.hashCode}';
+      if (_placeImages.add(imageId)) {
+        await controller.addImage(
+          imageId,
+          await renderPlaceCluster(
+            placeIcon: Icons.home,
+            color: const Color(0xFF22C55E),
+            people: members,
+          ),
+        );
+      }
     }
     final symbolOptions = SymbolOptions(
       geometry: LatLng(lat, lng),
@@ -387,10 +413,14 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
       iconAnchor: 'center',
     );
     if (_homeSymbol == null) {
-      _homeSymbol = await controller.addSymbol(symbolOptions);
+      _homeSymbol = await controller.addSymbol(
+        symbolOptions,
+        {'home': true},
+      );
     } else {
       await controller.updateSymbol(_homeSymbol!, symbolOptions);
     }
+    if (homeChanged) unawaited(_refreshMarkers());
   }
 
   void _onDataSaverChanged() {
@@ -400,6 +430,7 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
   void _onAvatarChanged() {
     _refreshMarkers();
     _refreshPlaces();
+    _refreshHome();
   }
 
   void _onMapPrefsChanged() {
@@ -597,6 +628,15 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
 
   void _onSymbolTapped(Symbol symbol) {
     final data = symbol.data;
+    if (data?['home'] == true && _homePlace != null) {
+      showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (_) => PlaceInfoSheet(place: _homePlace!, editable: false),
+      );
+      return;
+    }
     final placeId = data?['placeId'] as String?;
     if (placeId != null) {
       _openPlace(placeId);

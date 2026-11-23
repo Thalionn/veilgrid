@@ -11,9 +11,10 @@ import 'package:grid_frontend/widgets/grid/grid_sheet.dart';
 /// Read-only detail sheet shown when a saved place's circle is tapped on the
 /// map: its radius, who is currently inside it, and an edit action.
 class PlaceInfoSheet extends StatefulWidget {
-  const PlaceInfoSheet({super.key, required this.place});
+  const PlaceInfoSheet({super.key, required this.place, this.editable = true});
 
   final Place place;
+  final bool editable;
 
   @override
   State<PlaceInfoSheet> createState() => _PlaceInfoSheetState();
@@ -49,11 +50,13 @@ class _PlaceInfoSheetState extends State<PlaceInfoSheet> {
               subtitle:
                   'Saved place · ${formatDistance(_place.radiusMeters, rounded: true)} radius',
               onClose: () => Navigator.of(context).pop(),
-              trailing: IconButton(
-                icon: const Icon(Icons.edit_outlined, size: 20),
-                tooltip: 'Edit place',
-                onPressed: _edit,
-              ),
+              trailing: widget.editable
+                  ? IconButton(
+                      icon: const Icon(Icons.edit_outlined, size: 20),
+                      tooltip: 'Edit place',
+                      onPressed: _edit,
+                    )
+                  : null,
             ),
             const SizedBox(height: 16),
             Row(
