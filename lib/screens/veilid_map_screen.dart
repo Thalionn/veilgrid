@@ -227,7 +227,7 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     final lat = double.tryParse(parts[0]);
     final lng = double.tryParse(parts[1]);
     if (lat == null || lng == null) return;
-    final radiusMeters = prefs.getDouble('home_radius') ?? 150;
+    final radiusMeters = (prefs.get('home_radius') as num?)?.toDouble() ?? 150;
 
     final data = _areaCollection([
       _areaFeature('home', lat, lng, radiusMeters),
@@ -423,7 +423,12 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
         }
         return;
       }
-      await VeilidService.instance.sendLocation(pos.latitude, pos.longitude);
+      await VeilidService.instance.sendLocation(
+        pos.latitude,
+        pos.longitude,
+        batteryLevel: LocationManager.instance.batteryLevel,
+        isCharging: LocationManager.instance.isCharging,
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

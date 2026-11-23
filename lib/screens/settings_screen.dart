@@ -59,7 +59,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (!mounted) return;
     setState(() {
       _homeLocation = prefs.getString('home_location');
-      _homeRadius = (prefs.getDouble('home_radius') ?? 150).clamp(50.0, 1000.0);
+      _homeRadius = ((prefs.get('home_radius') as num?)?.toDouble() ?? 150).clamp(50.0, 1000.0);
       _autoPauseAtHome = prefs.getBool('auto_pause_at_home_enabled') ?? false;
       _notifications = prefs.getBool('notifications_enabled') ?? true;
     });

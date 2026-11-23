@@ -284,6 +284,10 @@ class LocationManager with ChangeNotifier {
     return LatLng(_lastPosition!.latitude, _lastPosition!.longitude);
   }
 
+  /// Battery at the last fix, 0.0–1.0, for manual shares between periodic ones.
+  double? get batteryLevel => _lastPosition?.batteryLevel;
+  bool? get isCharging => _lastPosition?.isCharging;
+
   bool get isTracking => _isTracking;
   TrackingMode get trackingMode => _trackingMode;
   bool get isInForeground => _isInForeground;

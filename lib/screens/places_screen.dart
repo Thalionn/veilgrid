@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:grid_frontend/models/place.dart';
 import 'package:grid_frontend/services/location_manager.dart';
+import 'package:grid_frontend/services/place_alert_service.dart';
 import 'package:grid_frontend/services/place_presence.dart';
 import 'package:grid_frontend/services/places_service.dart';
 import 'package:grid_frontend/services/veilid_service.dart';
@@ -11,8 +12,8 @@ import 'package:grid_frontend/widgets/grid/grid_button.dart';
 import 'package:grid_frontend/widgets/grid/place_search_sheet.dart';
 import 'package:grid_frontend/widgets/grid/tab_active.dart';
 
-/// "Places" tab: saved places (who's currently there) + movement alerts,
-/// modeled on Life360.
+/// "Places" tab: saved places (who's currently there) plus an activity feed of
+/// movement and place arrival/departure alerts, modeled on Life360.
 class PlacesScreen extends StatefulWidget {
   const PlacesScreen({super.key});
 
@@ -22,6 +23,7 @@ class PlacesScreen extends StatefulWidget {
 
 class _PlacesScreenState extends State<PlacesScreen> {
   StreamSubscription<MovementAlert>? _alertSub;
+  StreamSubscription<PlaceAlert>? _placeAlertSub;
   StreamSubscription<Map<String, dynamic>>? _locSub;
   DateTime _lastLocationRebuild = DateTime.fromMillisecondsSinceEpoch(0);
   bool _active = true;
@@ -40,7 +42,12 @@ class _PlacesScreenState extends State<PlacesScreen> {
   void initState() {
     super.initState();
     PlacesService.instance.load();
+    PlaceAlertService.instance.start();
     _alertSub = VeilidService.instance.movementAlerts.listen((_) {
+      if (!_active || !mounted) return;
+      setState(() {});
+    });
+    _placeAlertSub = PlaceAlertService.instance.alerts.listen((_) {
       if (!_active || !mounted) return;
       setState(() {});
     });
@@ -58,6 +65,7 @@ class _PlacesScreenState extends State<PlacesScreen> {
   @override
   void dispose() {
     _alertSub?.cancel();
+    _placeAlertSub?.cancel();
     _locSub?.cancel();
     super.dispose();
   }
@@ -161,7 +169,14 @@ class _PlacesScreenState extends State<PlacesScreen> {
   Widget build(BuildContext context) {
     final c = context.gridColors;
     final places = PlacesService.instance.places;
-    final alerts = VeilidService.instance.recentAlerts;
+    final movement = VeilidService.instance.recentAlerts;
+    final placeAlerts = PlaceAlertService.instance.recentAlerts;
+    final feed = <({DateTime at, Widget tile})>[
+      for (final a in movement)
+        if (!_suppressedByPlace(a, placeAlerts))
+          (at: a.at, tile: _alertTile(context, a)),
+      for (final a in placeAlerts) (at: a.at, tile: _placeAlertTile(context, a)),
+    ]..sort((a, b) => b.at.compareTo(a.at));
 
     return Scaffold(
       appBar: AppBar(title: const Text('Places')),
@@ -187,14 +202,15 @@ class _PlacesScreenState extends State<PlacesScreen> {
             ),
           ),
           const SizedBox(height: 16),
-          _section(c, 'Movement alerts'),
-          if (alerts.isEmpty)
+          _section(c, 'Activity'),
+          if (feed.isEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-              child: Text('No movement yet.', style: TextStyle(color: c.text3, fontSize: 13)),
+              child: Text('No activity yet.',
+                  style: TextStyle(color: c.text3, fontSize: 13)),
             )
           else
-            for (final a in alerts.take(20)) _alertTile(context, a),
+            for (final item in feed.take(20)) item.tile,
         ],
       ),
     );
@@ -216,6 +232,32 @@ class _PlacesScreenState extends State<PlacesScreen> {
         tooltip: 'Remove place',
         onPressed: () => _deletePlace(place),
       ),
+    );
+  }
+
+  /// A "stopped" movement alert right next to an arrival at the same place is
+  /// redundant; the place alert carries more information.
+  bool _suppressedByPlace(MovementAlert a, List<PlaceAlert> places) {
+    if (a.moving) return false;
+    return places.any((p) =>
+        p.arrived &&
+        p.address == a.address &&
+        p.at.difference(a.at).inSeconds.abs() < 120);
+  }
+
+  Widget _placeAlertTile(BuildContext context, PlaceAlert a) {
+    final c = context.gridColors;
+    return ListTile(
+      dense: true,
+      leading: Icon(
+        a.arrived ? Icons.place : Icons.directions_walk,
+        color: a.arrived ? c.mint : c.text3,
+        size: 20,
+      ),
+      title: Text(
+          '${_name(a.address)} ${a.arrived ? 'arrived at' : 'left'} ${a.placeName}'),
+      subtitle: Text(_timeAgo(a.at),
+          style: TextStyle(fontSize: 11, color: c.text3)),
     );
   }
 

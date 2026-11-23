@@ -404,6 +404,15 @@ class VeilidService {
     // First fix from this contact starts their state clock.
     _contactMoving.putIfAbsent(from, () => false);
     _contactMovingSince.putIfAbsent(from, () => now);
+    final rawBattery = payload['battery'];
+    int? battery;
+    if (rawBattery is num && rawBattery.isFinite) {
+      final rounded = rawBattery.round();
+      if (rounded >= 0 && rounded <= 100) battery = rounded;
+    }
+    final charging =
+        payload['charging'] is bool ? payload['charging'] as bool : null;
+
     final prev = _contactLocations[from];
     final loc = <String, dynamic>{
       'lat': lat,
@@ -413,6 +422,8 @@ class VeilidService {
       'routeId': update.routeId,
       'sender': update.sender?.toString(),
       'ts': now,
+      if (battery != null) 'battery': battery,
+      if (charging != null) 'charging': charging,
     };
     _locationController.add(loc);
     _contactLocations[from] = loc;
@@ -880,7 +891,13 @@ class VeilidService {
   /// Sends [lat],[lng] to every non-paused contact. Caches each contact's
   /// route for a short TTL so continuous sharing doesn't re-hit the DHT on
   /// every fix; a stale/dead route is re-resolved after the TTL.
-  Future<void> sendLocation(double lat, double lng, {double? accuracy}) async {
+  Future<void> sendLocation(
+    double lat,
+    double lng, {
+    double? accuracy,
+    double? batteryLevel,
+    bool? isCharging,
+  }) async {
     // Never sign or transmit a GPS value that could crash a recipient.
     if (!isFiniteLatLng(lat, lng)) return;
     await _ensureStarted();
@@ -907,12 +924,20 @@ class VeilidService {
       lng: lng6,
       accuracy: accuracy,
     );
+    // Battery is advisory UI state. It travels inside the encrypted,
+    // authenticated route and is ignored by older clients; the location
+    // signature covers position only.
+    final batteryPercent = batteryLevel == null || !batteryLevel.isFinite
+        ? null
+        : (batteryLevel * 100).round().clamp(0, 100);
     final payload = jsonEncode({
       'type': 'location',
       'v': _locationProtocolVersion,
       'lat': lat6,
       'lng': lng6,
       'accuracy': accuracy,
+      if (batteryPercent != null) 'battery': batteryPercent,
+      if (isCharging != null) 'charging': isCharging,
       'from': from,
       'ts': ts,
       'nonce': nonce,

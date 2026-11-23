@@ -115,7 +115,15 @@ class _ContactDetailSheetState extends State<ContactDetailSheet> {
 
     String? lastSeen;
     String? distance;
+    int? battery;
+    bool charging = false;
     if (loc != null) {
+      final rawBattery = loc['battery'];
+      if (rawBattery is num) {
+        final value = rawBattery.round();
+        if (value >= 0 && value <= 100) battery = value;
+      }
+      charging = loc['charging'] == true;
       final ts = loc['ts'];
       lastSeen = ts is DateTime ? ts.toIso8601String() : null;
       final lat = (loc['lat'] as num?)?.toDouble();
@@ -169,6 +177,28 @@ class _ContactDetailSheetState extends State<ContactDetailSheet> {
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
                           color: c.text2)),
+                ],
+              ),
+            ],
+            if (battery != null) ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Icon(
+                    charging
+                        ? Icons.battery_charging_full
+                        : Icons.battery_std_outlined,
+                    size: 15,
+                    color: battery <= 20 && !charging ? c.danger : c.mint,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    '$battery%${charging ? ' · charging' : ''}',
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: battery <= 20 && !charging ? c.danger : c.text2),
+                  ),
                 ],
               ),
             ],

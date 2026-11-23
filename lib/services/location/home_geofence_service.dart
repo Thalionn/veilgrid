@@ -73,7 +73,7 @@ class HomeGeofenceService {
     final prefs = await SharedPreferences.getInstance();
     final enabled = prefs.getBool('auto_pause_at_home_enabled') ?? false;
     final raw = prefs.getString('home_location');
-    final radius = prefs.getDouble('home_radius') ?? 150;
+    final radius = (prefs.get('home_radius') as num?)?.toDouble() ?? 150;
 
     if (!enabled || raw == null || raw.isEmpty) {
       _clear();

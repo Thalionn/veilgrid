@@ -13,6 +13,8 @@ import 'package:grid_frontend/services/veilid_service.dart';
 import 'package:grid_frontend/services/location/home_geofence_service.dart';
 import 'package:grid_frontend/services/battery_guard.dart';
 import 'package:grid_frontend/services/map_data_saver.dart';
+import 'package:grid_frontend/services/places_service.dart';
+import 'package:grid_frontend/services/place_alert_service.dart';
 import 'package:grid_frontend/screens/home_screen.dart';
 
 Future<void> main() async {
@@ -27,6 +29,8 @@ Future<void> main() async {
   _initPublish();
   BatteryGuard.instance.start();
   MapDataSaver.instance.start();
+  unawaited(PlacesService.instance.load());
+  PlaceAlertService.instance.start();
 }
 
 /// Best-effort location boot: start tracking so "Send location" has a real
@@ -54,8 +58,13 @@ void _initSharing() {
 
   LocationManager.instance.locationStream.listen((update) {
     if (!dispatch.shouldPost(update)) return;
-    VeilidService.instance.sendLocation(update.latitude, update.longitude,
-        accuracy: update.accuracy);
+    VeilidService.instance.sendLocation(
+      update.latitude,
+      update.longitude,
+      accuracy: update.accuracy,
+      batteryLevel: update.batteryLevel,
+      isCharging: update.isCharging,
+    );
   });
 }
 

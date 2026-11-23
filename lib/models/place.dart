@@ -43,3 +43,21 @@ class MovementAlert {
   final DateTime at;
   final bool moving;
 }
+
+
+/// A contact entering or leaving a saved place.
+class PlaceAlert {
+  const PlaceAlert({
+    required this.address,
+    required this.placeId,
+    required this.placeName,
+    required this.at,
+    required this.arrived,
+  });
+
+  final String address;
+  final String placeId;
+  final String placeName;
+  final DateTime at;
+  final bool arrived;
+}
