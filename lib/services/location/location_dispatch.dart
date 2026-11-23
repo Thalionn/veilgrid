@@ -71,6 +71,12 @@ class LocationDispatch {
   double _customDistanceM = 100;
   Duration _customInterval = const Duration(seconds: 60);
   LocationActivity _activity = LocationActivity.unknown;
+
+  // Speed-based fallback for devices where activity recognition is missing
+  // or late. 8 m/s is ~29 km/h: above cycling, so a fast fix means a vehicle.
+  bool _speedDriving = false;
+  DateTime? _slowSince;
+
   DateTime? _lastPostAt;
   LocationUpdate? _lastPostedLocation;
 
@@ -200,6 +206,10 @@ class LocationDispatch {
       return true;
     }
 
+    _updateSpeedState(fix, now);
+    final activity =
+        _speedDriving ? LocationActivity.inVehicle : _activity;
+
     final elapsed = now.difference(last);
     final distance = _haversineMeters(
       prev.latitude,
@@ -209,7 +219,7 @@ class LocationDispatch {
     );
     // A custom cadence is for check-ins while resting. It must not slow the
     // one case that needs live updates: a contact driving on the road.
-    final t = (_customEnabled && _activity != LocationActivity.inVehicle)
+    final t = (_customEnabled && activity != LocationActivity.inVehicle)
         ? _Thresholds(
             distanceM: _customDistanceM,
             interval: _customInterval,
@@ -217,7 +227,7 @@ class LocationDispatch {
               seconds: math.max(_customInterval.inSeconds * 4, 300),
             ),
           )
-        : _thresholdsFor(_activity, _mode);
+        : _thresholdsFor(activity, _mode);
 
     if (distance >= t.distanceM || elapsed >= t.interval) {
       _record(fix, now);
@@ -227,7 +237,7 @@ class LocationDispatch {
     // Stationary heartbeat — even when locked still, post once every
     // heartbeat window so the "Bing - 2m ago" timestamp doesn't slowly
     // creep up to "an hour ago" on idle phones.
-    if (_activity == LocationActivity.still && elapsed >= t.heartbeat) {
+    if (activity == LocationActivity.still && elapsed >= t.heartbeat) {
       _record(fix, now);
       return true;
     }
@@ -238,6 +248,26 @@ class LocationDispatch {
   void _record(LocationUpdate fix, DateTime at) {
     _lastPostedLocation = fix;
     _lastPostAt = at;
+  }
+
+  /// Keeps a speed-derived driving flag so live driving does not depend on
+  /// Activity Recognition being available. Stops only after two minutes below
+  /// walking speed, so slow traffic does not drop out of live updates.
+  void _updateSpeedState(LocationUpdate fix, DateTime now) {
+    if (fix.speed >= 8.0) {
+      _speedDriving = true;
+      _slowSince = null;
+    } else if (_speedDriving) {
+      if (fix.speed < 2.0) {
+        _slowSince ??= now;
+        if (now.difference(_slowSince!) >= const Duration(minutes: 2)) {
+          _speedDriving = false;
+          _slowSince = null;
+        }
+      } else {
+        _slowSince = null;
+      }
+    }
   }
 
   LocationActivity _mapActivity(String? activity) {

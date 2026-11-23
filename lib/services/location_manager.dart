@@ -38,6 +38,10 @@ class LocationManager with ChangeNotifier {
   LocationActivity _activity = LocationActivity.unknown;
   libre.TrackingPreset? _appliedPreset;
 
+  // Speed fallback for driving when activity recognition is unavailable.
+  bool _speedDriving = false;
+  DateTime? _lastFastFixAt;
+
   /// Must be awaited once at boot, before [startTracking]. Hydrates the
   /// persisted sharing mode so the first config push uses the user's choice
   /// rather than the default.
@@ -83,7 +87,7 @@ class LocationManager with ChangeNotifier {
     final libre.TrackingPreset preset;
     if (paused) {
       preset = libre.TrackingPreset.low;
-    } else if (_activity == LocationActivity.inVehicle) {
+    } else if (_activity == LocationActivity.inVehicle || _speedDriving) {
       // Driving is the one time contacts need live movement. Spend the
       // battery here so the car is actually shown on the road.
       preset = libre.TrackingPreset.high;
@@ -179,12 +183,32 @@ class LocationManager with ChangeNotifier {
     notifyListeners();
   }
 
+  /// 8 m/s (~29 km/h) is above cycling, so it reliably means a vehicle.
+  /// Falls back to walking speed for two minutes before clearing, so slow
+  /// traffic does not drop back to the stationary tier.
+  void _updateSpeedDriving(LocationUpdate fix, DateTime now) {
+    if (fix.speed >= 8.0) {
+      _lastFastFixAt = now;
+      if (!_speedDriving) {
+        _speedDriving = true;
+        _applyTrackingPreset();
+      }
+    } else if (_speedDriving &&
+        fix.speed < 2.0 &&
+        _lastFastFixAt != null &&
+        now.difference(_lastFastFixAt!) >= const Duration(minutes: 2)) {
+      _speedDriving = false;
+      _applyTrackingPreset();
+    }
+  }
+
   // Setup location service listeners
   void _setupLocationService() {
     // Listen for location updates
     _locationSubscription = _locationService.locationStream.listen((location) {
       final now = DateTime.now();
-      
+      _updateSpeedDriving(location, now);
+
       // Always update our internal position to keep it fresh
       _lastPosition = location;
       _remember(location);
