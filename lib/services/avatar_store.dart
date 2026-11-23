@@ -12,8 +12,9 @@ class AvatarStore extends ChangeNotifier {
 
   static const _myKey = 'my_avatar';
   static const _contactsKey = 'contact_avatars';
-  /// Leaves room for base64 overhead inside a Veilid app message.
-  static const int maxBytes = 24000;
+  /// Base64 grows by ~4/3 and the message also carries JSON/signature
+  /// overhead, so keep the raw PNG comfortably below the app-message limit.
+  static const int maxBytes = 16000;
 
   Uint8List? _mine;
   final Map<String, Uint8List> _contacts = {};
