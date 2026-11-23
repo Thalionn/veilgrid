@@ -80,4 +80,8 @@ dependency_overrides:
 
 flutter:
   uses-material-design: true
+  # Bundled so the first frame never waits on a Google Fonts download and the
+  # UI cannot reflow when a font arrives. google_fonts finds these by filename.
+  assets:
+    - assets/google_fonts/
 

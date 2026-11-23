@@ -18,12 +18,19 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _index = 0;
 
+  // Build each tab on first visit, then keep it alive. Building all four up
+  // front loaded prefs, the QR address and the Places feed before the map had
+  // even drawn, which made startup and the first tab switch feel slow.
+  final Set<int> _loaded = {0};
+
   @override
   void initState() {
     super.initState();
-    // Quietly look for a newer GitHub release after the first frame; if one
-    // exists, offer it without blocking startup.
-    WidgetsBinding.instance.addPostFrameCallback((_) => _checkForUpdate());
+    // Quietly look for a newer GitHub release after the map has settled; the
+    // request must not compete with the first basemap tiles for the radio.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future<void>.delayed(const Duration(seconds: 5), _checkForUpdate);
+    });
   }
 
   Future<void> _checkForUpdate() async {
@@ -64,12 +71,18 @@ class _HomeScreenState extends State<HomeScreen> {
         index: _index,
         children: [
           for (var i = 0; i < _tabs.length; i++)
-            TabActive(active: _index == i, child: _tabs[i]),
+            if (_loaded.contains(i))
+              TabActive(active: _index == i, child: _tabs[i])
+            else
+              const SizedBox.shrink(),
         ],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
+        onDestinationSelected: (i) => setState(() {
+          _index = i;
+          _loaded.add(i);
+        }),
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.map_outlined),

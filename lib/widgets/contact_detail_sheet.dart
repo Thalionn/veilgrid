@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:grid_frontend/services/location_manager.dart';
 import 'package:grid_frontend/services/places_service.dart';
+import 'package:grid_frontend/services/units_controller.dart';
 import 'package:grid_frontend/styles/grid_colors.dart';
 import 'package:grid_frontend/services/veilid_service.dart';
 import 'package:grid_frontend/utilities/time_ago_formatter.dart';
@@ -132,9 +133,7 @@ class _ContactDetailSheetState extends State<ContactDetailSheet> {
       if (lat != null && lng != null && me != null) {
         final m =
             Geolocator.distanceBetween(me.latitude, me.longitude, lat, lng);
-        distance = m < 1000
-            ? '${m.round()} m'
-            : '${(m / 1000).toStringAsFixed(1)} km';
+        distance = formatDistance(m);
       }
     }
 

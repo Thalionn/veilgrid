@@ -252,7 +252,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final incognito = SharingStateNotifier.instance.userIncognito;
-    final speedUnit = UnitsController.instance.speedUnit;
+    final system = UnitsController.instance.system;
     final themeMode = ThemeController.instance.mode;
 
     return Scaffold(
@@ -330,7 +330,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             leading: const Icon(Icons.radar),
             title: const Text('Home radius'),
             subtitle: Text(
-                '${_homeRadius.round()} m — pause sharing within this distance'),
+                '${formatDistance(_homeRadius)} — pause sharing within this distance'),
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -339,9 +339,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               min: 50,
               max: 1000,
               divisions: 19,
-              label: '${_homeRadius.round()} m',
-              onChanged: (v) {
-                setState(() => _homeRadius = v);
+              label: formatDistance(_homeRadius),
+              onChanged: (v) => setState(() => _homeRadius = v),
+              onChangeEnd: (v) {
                 _setPref('home_radius', v);
                 HomeGeofenceService.instance.syncFromPrefs();
               },
@@ -379,16 +379,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 12),
           _sectionLabel(context, 'Units'),
           ListTile(
-            title: const Text('Speed units'),
-            subtitle: Text('Show contact speed as ${speedUnit.label}'),
-            trailing: DropdownButton<SpeedUnit>(
-              value: speedUnit,
+            title: const Text('Units'),
+            subtitle: Text(
+                'Distances and speeds in ${system.label.toLowerCase()} (${system.detail})'),
+            trailing: DropdownButton<MeasurementSystem>(
+              value: system,
               underline: const SizedBox.shrink(),
-              items: SpeedUnit.values
+              items: MeasurementSystem.values
                   .map((u) => DropdownMenuItem(value: u, child: Text(u.label)))
                   .toList(),
               onChanged: (u) {
-                if (u != null) UnitsController.instance.setSpeedUnit(u);
+                if (u != null) UnitsController.instance.setSystem(u);
               },
             ),
           ),

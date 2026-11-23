@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:grid_frontend/services/battery_guard.dart';
 import 'package:grid_frontend/services/location/location_dispatch.dart';
 import 'package:grid_frontend/services/map_data_saver.dart';
+import 'package:grid_frontend/services/units_controller.dart';
 import 'package:grid_frontend/services/location_manager.dart';
 import 'package:grid_frontend/styles/grid_colors.dart';
 
@@ -134,14 +135,12 @@ class _BatterySettingsScreenState extends State<BatterySettingsScreen> {
               max: 600,
               divisions: 19,
               label: '${_intervalSeconds.round()} s',
-              onChanged: (v) {
-                setState(() => _intervalSeconds = v);
-                _saveCustom();
-              },
+              onChanged: (v) => setState(() => _intervalSeconds = v),
+              onChangeEnd: (_) => _saveCustom(),
             ),
             ListTile(
               title: const Text('Minimum distance'),
-              subtitle: Text('${_distanceMeters.round()} m',
+              subtitle: Text(formatDistance(_distanceMeters),
                   style: TextStyle(color: c.mint)),
               dense: true,
             ),
@@ -150,11 +149,9 @@ class _BatterySettingsScreenState extends State<BatterySettingsScreen> {
               min: 25,
               max: 1000,
               divisions: 39,
-              label: '${_distanceMeters.round()} m',
-              onChanged: (v) {
-                setState(() => _distanceMeters = v);
-                _saveCustom();
-              },
+              label: formatDistance(_distanceMeters),
+              onChanged: (v) => setState(() => _distanceMeters = v),
+              onChangeEnd: (_) => _saveCustom(),
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -238,13 +235,13 @@ class _BatterySettingsScreenState extends State<BatterySettingsScreen> {
 
   String _modeHint(SharingMode mode) => switch (mode) {
         SharingMode.light =>
-          'Roughly every 5 min / 500 m, low accuracy. Rests when still and '
+          'Roughly every 5 min / ${formatDistance(500)}, low accuracy. Rests when still and '
               'speeds up while driving. Lowest battery use.',
         SharingMode.balanced =>
-          'Every ~60 s / 50 m while moving, high accuracy. Rests when still '
+          'Every ~60 s / ${formatDistance(50)} while moving, high accuracy. Rests when still '
               'and speeds up while driving. Default.',
         SharingMode.live =>
-          'Every ~15 s / 10 m while moving, high accuracy. Speeds up while '
+          'Every ~15 s / ${formatDistance(10)} while moving, high accuracy. Speeds up while '
               'driving. Highest battery use.',
       };
 

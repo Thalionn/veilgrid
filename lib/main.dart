@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:grid_frontend/styles/tokens.dart';
 import 'package:grid_frontend/styles/grid_colors.dart';
 import 'package:grid_frontend/services/theme_controller.dart';
+import 'package:grid_frontend/services/units_controller.dart';
 import 'package:grid_frontend/services/location_manager.dart';
 import 'package:grid_frontend/services/location/location_dispatch.dart';
 import 'package:grid_frontend/services/sharing_state_notifier.dart';
@@ -22,15 +23,26 @@ Future<void> main() async {
   // Hydrate the persisted last fix before the first frame, so the map opens
   // on the user's location instead of a placeholder. This is only prefs and
   // listener setup (fast); hardware tracking starts after the UI is up.
-  await LocationManager.instance.initialize();
+  // Hydrate the small preference-backed controllers together. Theme and
+  // units used to load lazily (or not at all), which caused a second theme
+  // build on first frame and lost the saved choice across launches.
+  await Future.wait([
+    LocationManager.instance.initialize(),
+    ThemeController.instance.load(),
+    UnitsController.instance.load(),
+  ]);
   runApp(const GridApp());
   _startLocation();
   _initSharing();
   _initPublish();
-  BatteryGuard.instance.start();
-  MapDataSaver.instance.start();
-  unawaited(PlacesService.instance.load());
-  PlaceAlertService.instance.start();
+  // Non-critical listeners wait for the first frame so they cannot compete
+  // with the map's initial layout and style load.
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    BatteryGuard.instance.start();
+    MapDataSaver.instance.start();
+    unawaited(PlacesService.instance.load());
+    PlaceAlertService.instance.start();
+  });
 }
 
 /// Best-effort location boot: start tracking so "Send location" has a real
@@ -86,6 +98,11 @@ Future<void> _initPublish() async {
 class GridApp extends StatelessWidget {
   const GridApp({super.key});
 
+  // ThemeData is immutable and only depends on the scheme, so build each one
+  // once instead of rebuilding both on every theme-preference notification.
+  static final ThemeData _lightTheme = _buildTheme(GridTokens.lightScheme());
+  static final ThemeData _darkTheme = _buildTheme(GridTokens.darkScheme());
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -93,8 +110,8 @@ class GridApp extends StatelessWidget {
       builder: (context, _) => MaterialApp(
         title: 'Grid',
         debugShowCheckedModeBanner: false,
-        theme: _buildTheme(GridTokens.lightScheme()),
-        darkTheme: _buildTheme(GridTokens.darkScheme()),
+        theme: _lightTheme,
+        darkTheme: _darkTheme,
         themeMode: ThemeController.instance.mode,
         home: const HomeScreen(),
       ),

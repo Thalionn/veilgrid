@@ -49,10 +49,16 @@ String buildGridMapStyle({
   String? pmtilesUrl,
   bool dataSaver = false,
 }) {
-  // Data saver: no tile source at all. Markers, places and the home
-  // circle are annotations, so they still render on the plain background.
+  final url = pmtilesUrl ?? _activePmtilesUrl;
+  final key = dataSaver ? 'blank|$dark' : '${dark ? 'dark' : 'light'}|$url';
+  final cached = _styleCache[key];
+  if (cached != null) return cached;
+
+  final String encoded;
   if (dataSaver) {
-    return jsonEncode({
+    // No tile source at all. Markers, places and the home circle are
+    // annotations, so they still render on the plain background.
+    encoded = jsonEncode({
       'version': 8,
       'sources': <String, dynamic>{},
       'layers': [
@@ -63,30 +69,41 @@ String buildGridMapStyle({
         }
       ],
     });
+  } else {
+    final spriteFlavor = dark ? 'dark' : 'light';
+    encoded = jsonEncode(<String, dynamic>{
+      'version': 8,
+      'sources': {
+        'protomaps': {
+          'type': 'vector',
+          'url': url,
+          'attribution':
+              '<a href="https://protomaps.com">Protomaps</a> © <a href="https://openstreetmap.org">OSM</a>',
+        }
+      },
+      'sprite':
+          'https://protomaps.github.io/basemaps-assets/sprites/v4/$spriteFlavor',
+      'glyphs':
+          'https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf',
+      'layers': [
+        ...(dark ? protomapsV4DarkLayers : protomapsV4LightLayers),
+        ..._extraPoiLayers(dark: dark),
+      ],
+    });
   }
-  pmtilesUrl ??= _activePmtilesUrl;
-  final spriteFlavor = dark ? 'dark' : 'light';
-  final style = <String, dynamic>{
-    'version': 8,
-    'sources': {
-      'protomaps': {
-        'type': 'vector',
-        'url': pmtilesUrl,
-        'attribution':
-            '<a href="https://protomaps.com">Protomaps</a> © <a href="https://openstreetmap.org">OSM</a>',
-      }
-    },
-    'sprite':
-        'https://protomaps.github.io/basemaps-assets/sprites/v4/$spriteFlavor',
-    'glyphs':
-        'https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf',
-    'layers': [
-      ...(dark ? protomapsV4DarkLayers : protomapsV4LightLayers),
-      ..._extraPoiLayers(dark: dark),
-    ],
-  };
-  return jsonEncode(style);
+
+  // Encoding the full Protomaps style is the expensive part of opening the
+  // map; keep the last few variants so theme and data-saver switches are
+  // instant.
+  _styleCache[key] = encoded;
+  if (_styleCache.length > _styleCacheLimit) {
+    _styleCache.remove(_styleCache.keys.first);
+  }
+  return encoded;
 }
+
+final Map<String, String> _styleCache = <String, String>{};
+const int _styleCacheLimit = 4;
 
 /// Extra POI layers stacked on top of the protomaps base style.
 /// Tiered by importance/visibility, drawn in the order returned.

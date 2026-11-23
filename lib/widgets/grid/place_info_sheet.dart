@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:grid_frontend/models/place.dart';
 import 'package:grid_frontend/services/place_presence.dart';
+import 'package:grid_frontend/services/units_controller.dart';
 import 'package:grid_frontend/styles/grid_colors.dart';
 import 'package:grid_frontend/widgets/grid/grid_sheet.dart';
 
@@ -29,7 +30,8 @@ class PlaceInfoSheet extends StatelessWidget {
           children: [
             GridSheetHeader(
               title: place.name,
-              subtitle: 'Saved place · ${place.radiusMeters.round()} m radius',
+              subtitle:
+                  'Saved place · ${formatDistance(place.radiusMeters, rounded: true)} radius',
               onClose: () => Navigator.of(context).pop(),
             ),
             const SizedBox(height: 16),

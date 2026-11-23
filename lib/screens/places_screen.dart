@@ -6,6 +6,7 @@ import 'package:grid_frontend/services/location_manager.dart';
 import 'package:grid_frontend/services/place_alert_service.dart';
 import 'package:grid_frontend/services/place_presence.dart';
 import 'package:grid_frontend/services/places_service.dart';
+import 'package:grid_frontend/services/units_controller.dart';
 import 'package:grid_frontend/services/veilid_service.dart';
 import 'package:grid_frontend/styles/grid_colors.dart';
 import 'package:grid_frontend/widgets/grid/grid_button.dart';
@@ -124,11 +125,11 @@ class _PlacesScreenState extends State<PlacesScreen> {
                       min: 50,
                       max: 500,
                       divisions: 9,
-                      label: '${radius.round()} m',
+                      label: formatDistance(radius),
                       onChanged: (v) => setDialogState(() => radius = v),
                     ),
                   ),
-                  Text('${radius.round()} m'),
+                  Text(formatDistance(radius)),
                 ],
               ),
             ],
@@ -225,7 +226,7 @@ class _PlacesScreenState extends State<PlacesScreen> {
     return ListTile(
       leading: Icon(Icons.place_outlined, color: c.mint),
       title: Text(place.name),
-      subtitle: Text('${who} · within ${place.radiusMeters.round()} m'),
+      subtitle: Text('${who} · within ${formatDistance(place.radiusMeters, rounded: true)}'),
       isThreeLine: false,
       trailing: IconButton(
         icon: const Icon(Icons.close, size: 18),
