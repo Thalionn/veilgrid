@@ -48,10 +48,8 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
   bool _centeredOnMe = false;
   bool _sending = false;
 
-  // Trails are rebuilt at most once per this window. A single own fix used to
-  // trigger two full rebuilds (location stream + history stream); this
-  // coalesces them and keeps a 6000-point polyline from being re-tessellated
-  // on every message.
+  // Coalesce marker rebuilds: one own fix and one incoming contact update can
+  // arrive together, and rebuilding a marker twice per message is wasted work.
   bool _markerRefreshRunning = false;
   bool _markerRefreshQueued = false;
   bool _active = true;

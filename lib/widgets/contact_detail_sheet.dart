@@ -203,7 +203,7 @@ class _ContactDetailSheetState extends State<ContactDetailSheet> {
                   style:
                       TextStyle(color: Theme.of(context).colorScheme.error)),
               subtitle: const Text(
-                  'Unlink, stop sharing, and delete their location history'),
+                  'Unlink, stop sharing, and forget their last location'),
               onTap: _confirmRemove,
             ),
           ],
@@ -219,7 +219,7 @@ class _ContactDetailSheetState extends State<ContactDetailSheet> {
         title: Text('Remove $_name?'),
         content: const Text(
             'You will stop sharing with them and they will stop appearing on '
-            'your map. Their stored location history on this device is deleted. '
+            'your map. Their stored location on this device is deleted. '
             'Re-linking requires their QR code again.'),
         actions: [
           TextButton(
