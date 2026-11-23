@@ -30,7 +30,8 @@ Color avatarColorFor(String name) =>
 /// First [count] letters/digits of the name, uppercase. Punctuation and spaces
 /// are skipped so record-key fallbacks still produce readable initials.
 String initialsFor(String name, {int count = 3}) {
-  final cleaned = name.replaceAll(RegExp(r'[^A-Za-z0-9]'), '');
+  final cleaned =
+      name.replaceAll(RegExp(r'[^\p{L}\p{N}]', unicode: true), '');
   if (cleaned.isEmpty) return '?';
   final n = cleaned.length < count ? cleaned.length : count;
   return cleaned.substring(0, n).toUpperCase();
