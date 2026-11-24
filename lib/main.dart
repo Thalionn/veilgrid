@@ -18,6 +18,7 @@ import 'package:grid_frontend/services/places_service.dart';
 import 'package:grid_frontend/services/place_alert_service.dart';
 import 'package:grid_frontend/services/activity_store.dart';
 import 'package:grid_frontend/services/avatar_store.dart';
+import 'package:grid_frontend/services/diagnostics_log.dart';
 import 'package:grid_frontend/services/map_preferences.dart';
 import 'package:grid_frontend/screens/home_screen.dart';
 
@@ -35,6 +36,7 @@ Future<void> main() async {
     UnitsController.instance.load(),
     AvatarStore.instance.load(),
     MapPreferences.instance.load(),
+    DiagnosticsLog.instance.load(),
   ]);
   runApp(const GridApp());
   _startLocation();
@@ -76,6 +78,9 @@ void _initSharing() {
 
   LocationManager.instance.locationStream.listen((update) {
     if (!dispatch.shouldPost(update)) return;
+    DiagnosticsLog.instance.log('SEND',
+        'accuracy=${update.accuracy.toStringAsFixed(0)} '
+        'battery=${update.batteryLevel == null ? '?' : (update.batteryLevel! * 100).round()}%');
     VeilidService.instance.sendLocation(
       update.latitude,
       update.longitude,

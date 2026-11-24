@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:battery_plus/battery_plus.dart';
+import 'diagnostics_log.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -68,8 +69,16 @@ class BatteryGuard {
           status == BatteryState.charging || status == BatteryState.full;
 
       if (!charging && level <= limit) {
+        if (!_state.pausedForBattery) {
+          DiagnosticsLog.instance.log(
+              'BATTERY', 'paused for low battery at $level% (limit $limit%)');
+        }
         _state.setPausedForBattery(true);
       } else if (charging || level > limit + 5) {
+        if (_state.pausedForBattery) {
+          DiagnosticsLog.instance.log(
+              'BATTERY', 'resumed sharing at $level% (limit $limit%)');
+        }
         _state.setPausedForBattery(false);
       }
     } catch (e) {

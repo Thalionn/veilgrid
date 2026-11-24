@@ -6,6 +6,7 @@ import 'package:grid_frontend/services/battery_guard.dart';
 import 'package:grid_frontend/services/location/location_dispatch.dart';
 import 'package:grid_frontend/services/map_data_saver.dart';
 import 'package:grid_frontend/services/units_controller.dart';
+import 'package:grid_frontend/screens/battery_log_screen.dart';
 import 'package:grid_frontend/services/location_manager.dart';
 import 'package:grid_frontend/styles/grid_colors.dart';
 
@@ -208,6 +209,19 @@ class _BatterySettingsScreenState extends State<BatterySettingsScreen> {
             leading: const Icon(Icons.battery_std),
             title: const Text('Current battery'),
             subtitle: Text(_level == null ? '—' : '$_level%'),
+          ),
+
+          const SizedBox(height: 8),
+          _sectionLabel(context, 'Diagnostics'),
+          ListTile(
+            leading: const Icon(Icons.monitor_heart_outlined),
+            title: const Text('Battery diagnostics'),
+            subtitle: const Text(
+                'See activity, tracking preset, GPS fixes and sends'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const BatteryLogScreen()),
+            ),
           ),
 
           const SizedBox(height: 8),

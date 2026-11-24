@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:libre_location/libre_location.dart' as libre;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'diagnostics_log.dart';
 import 'location/location_service.dart';
 import 'location/location_update.dart';
 import 'location/location_service_config.dart';
@@ -42,6 +44,13 @@ class LocationManager with ChangeNotifier {
   bool _speedDriving = false;
   DateTime? _lastFastFixAt;
 
+  // Independent stillness fallback: Activity Recognition can get stuck on
+  // "walking", which otherwise keeps high-accuracy GPS running while the
+  // phone sits still.
+  bool _forcedStill = false;
+  LatLng? _stillAnchor;
+  DateTime? _stillSince;
+
   /// Must be awaited once at boot, before [startTracking]. Hydrates the
   /// persisted sharing mode so the first config push uses the user's choice
   /// rather than the default.
@@ -57,6 +66,13 @@ class LocationManager with ChangeNotifier {
     _activitySubscription =
         libre.LibreLocation.onActivityChange.listen((event) {
       _activity = _activityFrom(event.activity);
+      DiagnosticsLog.instance.log(
+          'ACTIVITY', '${_activity.name} (raw ${event.activity})');
+      if (_activity == LocationActivity.inVehicle) {
+        _forcedStill = false;
+        _stillAnchor = null;
+        _stillSince = null;
+      }
       // In a vehicle we want live movement on the map; on foot/still we go
       // back to the user's chosen tracking tier.
       _applyTrackingPreset();
@@ -91,6 +107,10 @@ class LocationManager with ChangeNotifier {
       // Driving is the one time contacts need live movement. Spend the
       // battery here so the car is actually shown on the road.
       preset = libre.TrackingPreset.high;
+    } else if (_forcedStill) {
+      // Real displacement clears this before the next preset choice; a stuck
+      // activity classifier must not keep high-accuracy GPS alive.
+      preset = libre.TrackingPreset.low;
     } else if (_activity == LocationActivity.walking) {
       preset = _trackingMode == TrackingMode.live
           ? libre.TrackingPreset.high
@@ -106,10 +126,14 @@ class LocationManager with ChangeNotifier {
           : libre.TrackingPreset.low;
     }
     if (_appliedPreset == preset) return;
+    DiagnosticsLog.instance.log('PRESET',
+        'mode=${effectiveTrackingMode.name} activity=${_activity.name} '
+        'forcedStill=$_forcedStill speedDriving=$_speedDriving -> ${preset.name}');
     _appliedPreset = preset;
     try {
       await libre.LibreLocation.setPreset(preset);
-    } catch (_) {
+    } catch (e) {
+      DiagnosticsLog.instance.log('PRESET', 'failed ${preset.name}: $e');
       // Tracker may not be up yet; the next activity event retries.
       _appliedPreset = null;
     }
@@ -121,6 +145,7 @@ class LocationManager with ChangeNotifier {
       onStateChange: (state) {
         switch (state) {
           case AppLifecycleState.resumed:
+            DiagnosticsLog.instance.log('LIFECYCLE', 'foreground');
             _isInForeground = true;
             _updateTrackingConfig();
             _applyTrackingPreset();
@@ -128,6 +153,7 @@ class LocationManager with ChangeNotifier {
           case AppLifecycleState.paused:
           case AppLifecycleState.inactive:
           case AppLifecycleState.detached:
+            DiagnosticsLog.instance.log('LIFECYCLE', 'background');
             _isInForeground = false;
             _updateTrackingConfig();
             _applyTrackingPreset();
@@ -193,6 +219,40 @@ class LocationManager with ChangeNotifier {
     notifyListeners();
   }
 
+  /// Forces the low-power tier after three minutes without real movement.
+  /// A displacement of 30 m or a speed over 1.5 m/s clears it.
+  void _updateStillness(LocationUpdate fix, DateTime now) {
+    if (!isFiniteLatLng(fix.latitude, fix.longitude)) return;
+    final here = LatLng(fix.latitude, fix.longitude);
+    final moved = _stillAnchor == null
+        ? 0.0
+        : Geolocator.distanceBetween(
+            _stillAnchor!.latitude,
+            _stillAnchor!.longitude,
+            here.latitude,
+            here.longitude,
+          );
+    final fast = fix.speed.isFinite && fix.speed >= 1.5;
+    if (_stillAnchor == null || moved > 30 || fast) {
+      final wasForced = _forcedStill;
+      _stillAnchor = here;
+      _stillSince = now;
+      if (wasForced) {
+        _forcedStill = false;
+        DiagnosticsLog.instance.log(
+            'STILL', 'movement detected -> leaving forced low-power');
+        _applyTrackingPreset();
+      }
+      return;
+    }
+    _stillSince ??= now;
+    if (!_forcedStill &&
+        now.difference(_stillSince!) >= const Duration(minutes: 3)) {
+      _forcedStill = true;
+      _applyTrackingPreset();
+    }
+  }
+
   /// 8 m/s (~29 km/h) is above cycling, so it reliably means a vehicle.
   /// Falls back to walking speed for two minutes before clearing, so slow
   /// traffic does not drop back to the stationary tier.
@@ -201,6 +261,7 @@ class LocationManager with ChangeNotifier {
       _lastFastFixAt = now;
       if (!_speedDriving) {
         _speedDriving = true;
+        DiagnosticsLog.instance.log('SPEED', 'fast fix -> driving');
         _applyTrackingPreset();
       }
     } else if (_speedDriving &&
@@ -208,6 +269,7 @@ class LocationManager with ChangeNotifier {
         _lastFastFixAt != null &&
         now.difference(_lastFastFixAt!) >= const Duration(minutes: 2)) {
       _speedDriving = false;
+      DiagnosticsLog.instance.log('SPEED', 'slow for 2 min -> not driving');
       _applyTrackingPreset();
     }
   }
@@ -218,6 +280,13 @@ class LocationManager with ChangeNotifier {
     _locationSubscription = _locationService.locationStream.listen((location) {
       final now = DateTime.now();
       _updateSpeedDriving(location, now);
+      _updateStillness(location, now);
+      DiagnosticsLog.instance.log('FIX',
+          'speed=${location.speed.toStringAsFixed(1)} '
+          'acc=${location.accuracy.toStringAsFixed(0)} '
+          'battery=${location.batteryLevel == null ? '?' : (location.batteryLevel! * 100).round()}% '
+          'moving=${location.isMoving} activity=${_activity.name} '
+          'preset=${_appliedPreset?.name ?? '?'} still=$_forcedStill');
 
       // Always update our internal position to keep it fresh
       _lastPosition = location;
@@ -289,6 +358,10 @@ class LocationManager with ChangeNotifier {
   bool? get isCharging => _lastPosition?.isCharging;
 
   bool get isTracking => _isTracking;
+  String get diagnosticActivity => _activity.name;
+  String get diagnosticPreset =>
+      _appliedPreset?.name ?? 'not applied';
+  bool get diagnosticForcedStill => _forcedStill;
   TrackingMode get trackingMode => _trackingMode;
   bool get isInForeground => _isInForeground;
   bool get isMoving => _isMoving;
@@ -340,6 +413,10 @@ class LocationManager with ChangeNotifier {
       _lastPosition = currentPos;
       _remember(currentPos);
       _lastLocationUpdate = DateTime.now();
+      DiagnosticsLog.instance.log('FIX',
+          'manual speed=${currentPos.speed.toStringAsFixed(1)} '
+          'acc=${currentPos.accuracy.toStringAsFixed(0)} '
+          'activity=${_activity.name} preset=${_appliedPreset?.name ?? '?'}');
       _locationStreamController.add(currentPos);
       notifyListeners();
       
