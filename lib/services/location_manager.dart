@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
@@ -50,6 +51,7 @@ class LocationManager with ChangeNotifier {
   bool _forcedStill = false;
   LatLng? _stillAnchor;
   DateTime? _stillSince;
+  Timer? _stillTimer;
 
   /// Must be awaited once at boot, before [startTracking]. Hydrates the
   /// persisted sharing mode so the first config push uses the user's choice
@@ -125,13 +127,27 @@ class LocationManager with ChangeNotifier {
           ? libre.TrackingPreset.balanced
           : libre.TrackingPreset.low;
     }
-    if (_appliedPreset == preset) return;
+    final current = libre.LibreLocation.currentPreset;
+    if (_appliedPreset == preset && current == preset) return;
     DiagnosticsLog.instance.log('PRESET',
         'mode=${effectiveTrackingMode.name} activity=${_activity.name} '
-        'forcedStill=$_forcedStill speedDriving=$_speedDriving -> ${preset.name}');
+        'forcedStill=$_forcedStill speedDriving=$_speedDriving '
+        'current=${current?.name ?? 'none'} -> ${preset.name}');
+    final previous = _appliedPreset;
     _appliedPreset = preset;
     try {
-      await libre.LibreLocation.setPreset(preset);
+      final service = _locationService;
+      if (preset == libre.TrackingPreset.low &&
+          previous != libre.TrackingPreset.low &&
+          service is LibreLocationService) {
+        DiagnosticsLog.instance.log(
+            'PRESET', 'restarting tracker to register low provider');
+        await service.restartWithPreset(preset);
+      } else {
+        await libre.LibreLocation.setPreset(preset);
+      }
+      DiagnosticsLog.instance.log(
+          'PRESET', 'applied; plugin now ${libre.LibreLocation.currentPreset?.name ?? 'none'}');
     } catch (e) {
       DiagnosticsLog.instance.log('PRESET', 'failed ${preset.name}: $e');
       // Tracker may not be up yet; the next activity event retries.
@@ -233,7 +249,11 @@ class LocationManager with ChangeNotifier {
             here.longitude,
           );
     final fast = fix.speed.isFinite && fix.speed >= 1.5;
-    if (_stillAnchor == null || moved > 30 || fast) {
+    // GPS drift indoors can easily exceed 30 m. Judge movement against the
+    // reported accuracy as well, so jitter cannot keep resetting the anchor.
+    final accuracy = fix.accuracy.isFinite ? fix.accuracy : 0.0;
+    final moveLimit = math.max(50.0, accuracy * 2.0);
+    if (_stillAnchor == null || moved > moveLimit || fast) {
       final wasForced = _forcedStill;
       _stillAnchor = here;
       _stillSince = now;
@@ -249,6 +269,18 @@ class LocationManager with ChangeNotifier {
     if (!_forcedStill &&
         now.difference(_stillSince!) >= const Duration(minutes: 3)) {
       _forcedStill = true;
+      _applyTrackingPreset();
+    }
+  }
+
+  void _checkStillOnTimer() {
+    if (!_isTracking || _forcedStill) return;
+    final since = _stillSince;
+    if (since == null) return;
+    if (DateTime.now().difference(since) >= const Duration(minutes: 3)) {
+      _forcedStill = true;
+      DiagnosticsLog.instance.log(
+          'STILL', '3 min timer without movement -> forced low-power');
       _applyTrackingPreset();
     }
   }
@@ -396,6 +428,14 @@ class LocationManager with ChangeNotifier {
     // Start the location service
     await _locationService.start();
     _isTracking = true;
+    _forcedStill = false;
+    _stillAnchor = null;
+    _stillSince = DateTime.now();
+    _stillTimer?.cancel();
+    _stillTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => _checkStillOnTimer(),
+    );
 
     // Apply battery-saver/foreground/background config
     _updateTrackingConfig();
@@ -429,6 +469,8 @@ class LocationManager with ChangeNotifier {
   // Stop tracking and remove listeners
   Future<void> stopTracking() async {
     if (!_isTracking) return;
+    _stillTimer?.cancel();
+    _stillTimer = null;
     await _locationService.stop();
     _isTracking = false;
     notifyListeners();

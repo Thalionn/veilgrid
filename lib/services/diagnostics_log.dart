@@ -51,6 +51,9 @@ class DiagnosticsLog extends ChangeNotifier {
 
   void log(String tag, String message) {
     if (!_enabled) return;
+    if (tag != 'FIX' && tag != 'SEND') {
+      debugPrint('[Diag] $tag $message');
+    }
     _entries.insert(0, DiagnosticEntry(DateTime.now(), tag, message));
     if (_entries.length > _maxEntries) _entries.removeLast();
     // A GPS fix every few seconds must not trigger a full UI rebuild each time.

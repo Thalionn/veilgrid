@@ -36,13 +36,13 @@ class LibreLocationService implements LocationService {
   bool get isTracking => _isTracking;
 
   @override
-  Future<void> start() async {
+  Future<void> start({libre.TrackingPreset? presetOverride}) async {
     if (_isTracking) return;
 
     print("====== STARTING LIBRE LOCATION TRACKING ======");
 
     try {
-      final preset = _presetForMode(_config.mode);
+      final preset = presetOverride ?? _presetForMode(_config.mode);
       final locationConfig = _buildStartConfig(_config);
 
       // Use preset API so AutoAdapter manages iOS background survival
@@ -135,6 +135,14 @@ class LibreLocationService implements LocationService {
       DebugLogService.instance.log('error', {'message': 'Error starting location: $e'});
       throw e;
     }
+  }
+
+  /// Restarts native tracking with [preset]. Needed because the plugin's
+  /// setConfig only re-registers providers while moving; a preset switch made
+  /// while stationary would otherwise keep the old high-accuracy GPS listener.
+  Future<void> restartWithPreset(libre.TrackingPreset preset) async {
+    await stop();
+    await start(presetOverride: preset);
   }
 
   @override
