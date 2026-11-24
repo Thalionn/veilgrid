@@ -1,7 +1,7 @@
 name: grid_frontend
 description: "VeilGrid: private, serverless location sharing over Veilid"
 publish_to: 'none'
-version: 2.3.13+2016
+version: 2.3.14+2017
 environment:
   sdk: '>=3.3.3 <4.0.0'
 
@@ -21,7 +21,6 @@ dependencies:
   permission_handler: ^12.0.1
   qr_flutter: ^4.1.0
   libre_location: ^0.4.1
-  geolocator: ^13.0.4
   qr_code_scanner_plus: ^2.5.0
   package_info_plus: ^8.3.1
   veilid:

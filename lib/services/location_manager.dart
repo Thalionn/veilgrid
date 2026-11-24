@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:libre_location/libre_location.dart' as libre;
 import 'package:shared_preferences/shared_preferences.dart';
+import '../utilities/geo_math.dart';
 import 'diagnostics_log.dart';
 import 'location/location_service.dart';
 import 'location/location_update.dart';
@@ -242,7 +242,7 @@ class LocationManager with ChangeNotifier {
     final here = LatLng(fix.latitude, fix.longitude);
     final moved = _stillAnchor == null
         ? 0.0
-        : Geolocator.distanceBetween(
+        : distanceMeters(
             _stillAnchor!.latitude,
             _stillAnchor!.longitude,
             here.latitude,

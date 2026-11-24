@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
+import 'package:grid_frontend/utilities/geo_math.dart';
 import 'package:grid_frontend/models/place.dart';
 import 'package:grid_frontend/screens/map/grid_map_style.dart';
 import 'package:grid_frontend/screens/battery_settings_screen.dart';
@@ -178,7 +178,7 @@ class _VeilidMapScreenState extends State<VeilidMapScreen> {
     ];
     for (final place in candidates) {
       if (!isFiniteLatLng(place.latitude, place.longitude)) continue;
-      final meters = Geolocator.distanceBetween(
+      final meters = distanceMeters(
           place.latitude, place.longitude, lat, lng);
       // Home uses a tight ~30 m (100 ft) display radius: two people that close
       // are treated as sharing the same home. The larger home radius remains

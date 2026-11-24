@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
+import 'package:grid_frontend/utilities/geo_math.dart';
 import 'package:grid_frontend/services/contact_situation.dart';
 import 'package:grid_frontend/services/location_manager.dart';
 import 'package:grid_frontend/services/units_controller.dart';
@@ -118,7 +118,7 @@ class _ContactDetailSheetState extends State<ContactDetailSheet> {
       final me = LocationManager.instance.currentLatLng;
       if (lat != null && lng != null && me != null) {
         final m =
-            Geolocator.distanceBetween(me.latitude, me.longitude, lat, lng);
+            distanceMeters(me.latitude, me.longitude, lat, lng);
         distance = formatDistance(m);
       }
     }

@@ -5,9 +5,9 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:veilid/veilid.dart';
+import 'package:grid_frontend/utilities/geo_math.dart';
 import 'package:grid_frontend/models/place.dart';
 import 'package:grid_frontend/utilities/lat_lng_validation.dart';
 import 'avatar_store.dart';
@@ -654,7 +654,7 @@ class VeilidService {
     if (prevLat == null || prevLng == null || prevTs is! DateTime) return;
     final dt = now.difference(prevTs).inSeconds;
     if (dt <= 0) return;
-    final meters = Geolocator.distanceBetween(prevLat, prevLng, lat, lng);
+    final meters = distanceMeters(prevLat, prevLng, lat, lng);
     final speed = meters / dt;
     final wasMoving = _contactMoving[address] ?? false;
     // A long gap (app asleep, reboot, sparse stationary updates) says nothing

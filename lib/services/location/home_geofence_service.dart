@@ -1,8 +1,8 @@
+import 'package:grid_frontend/utilities/geo_math.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show debugPrint;
-import 'package:geolocator/geolocator.dart';
 import 'package:libre_location/libre_location.dart' as libre;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -119,7 +119,7 @@ class HomeGeofenceService {
       return;
     }
 
-    final meters = Geolocator.distanceBetween(homeLat, homeLng, lat, lng);
+    final meters = distanceMeters(homeLat, homeLng, lat, lng);
     final paused = _sharingState.pausedAtHome;
 
     if (!paused && meters <= radius) {

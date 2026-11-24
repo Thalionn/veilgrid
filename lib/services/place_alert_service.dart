@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:grid_frontend/utilities/geo_math.dart';
 import 'package:grid_frontend/models/place.dart';
 import 'package:grid_frontend/services/places_service.dart';
 import 'package:grid_frontend/services/veilid_service.dart';
@@ -178,7 +178,7 @@ class PlaceAlertService {
     final lat = (loc['lat'] as num?)?.toDouble();
     final lng = (loc['lng'] as num?)?.toDouble();
     if (lat == null || lng == null || !isFiniteLatLng(lat, lng)) return false;
-    final meters = Geolocator.distanceBetween(
+    final meters = distanceMeters(
         place.latitude, place.longitude, lat, lng);
     return meters <= place.radiusMeters + slack;
   }

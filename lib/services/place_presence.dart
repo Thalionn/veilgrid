@@ -1,5 +1,5 @@
-import 'package:geolocator/geolocator.dart';
 
+import 'package:grid_frontend/utilities/geo_math.dart';
 import 'package:grid_frontend/models/place.dart';
 import 'package:grid_frontend/services/location_manager.dart';
 import 'package:grid_frontend/services/veilid_service.dart';
@@ -15,7 +15,7 @@ List<String> contactsAtPlace(Place place) {
     final lat = (loc['lat'] as num?)?.toDouble();
     final lng = (loc['lng'] as num?)?.toDouble();
     if (lat == null || lng == null || !isFiniteLatLng(lat, lng)) return;
-    final meters = Geolocator.distanceBetween(
+    final meters = distanceMeters(
         place.latitude, place.longitude, lat, lng);
     if (meters <= place.radiusMeters) result.add(address);
   });
@@ -36,7 +36,7 @@ String contactLabel(String address) {
 bool selfAtPlace(Place place) {
   final me = LocationManager.instance.currentLatLng;
   if (me == null) return false;
-  final meters = Geolocator.distanceBetween(
+  final meters = distanceMeters(
       place.latitude, place.longitude, me.latitude, me.longitude);
   return meters <= place.radiusMeters;
 }
