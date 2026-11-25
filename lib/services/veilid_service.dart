@@ -469,6 +469,9 @@ class VeilidService {
     _linkTokenLoaded = true;
     final prefs = await SharedPreferences.getInstance();
     _linkBackToken = prefs.getString(_linkTokenPref);
+    DiagnosticsLog.instance.log(
+        'LINK',
+        'invite token ${_linkBackToken == null || _linkBackToken!.isEmpty ? 'not set' : 'loaded'}');
   }
 
   Future<void> setLinkBackToken(String? token) async {
