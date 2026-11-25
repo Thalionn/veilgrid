@@ -265,8 +265,6 @@ class LocationManager with ChangeNotifier {
         DiagnosticsLog.instance.log(
             'STILL', 'movement detected -> leaving forced low-power');
         _applyTrackingPreset();
-        // Real movement after a still spell: wake the parked Veilid node.
-        VeilidService.instance.noteMovement();
       }
       return;
     }
@@ -300,7 +298,6 @@ class LocationManager with ChangeNotifier {
         _speedDriving = true;
         DiagnosticsLog.instance.log('SPEED', 'fast fix -> driving');
         _applyTrackingPreset();
-        VeilidService.instance.noteMovement();
       }
     } else if (_speedDriving &&
         fix.speed < 2.0 &&
@@ -319,6 +316,11 @@ class LocationManager with ChangeNotifier {
       final now = DateTime.now();
       _updateSpeedDriving(location, now);
       _updateStillness(location, now);
+      // Keep the node attached for as long as the phone is actually moving,
+      // not just at the moment movement starts. Speed is used rather than the
+      // plugin's isMoving flag, which can stay stuck on while stationary.
+      VeilidService.instance.setMoving(
+          !_forcedStill && location.speed > 1.5);
       DiagnosticsLog.instance.log('FIX',
           'speed=${location.speed.toStringAsFixed(1)} '
           'acc=${location.accuracy.toStringAsFixed(0)} '

@@ -243,6 +243,7 @@ class VeilidService {
         'live=${a.livePeerCount} reliable=${a.reliablePeerCount} '
         'peers=${n.peers.length} down=${n.bpsDown} up=${n.bpsUp} '
         'net=${a.estimatedNetworkSize} parked=$_parked fg=$_foreground '
+        'moving=$_moving '
         'idle=${DateTime.now().difference(_lastMovementAt).inSeconds}s',
       );
     } catch (_) {
@@ -267,6 +268,7 @@ class VeilidService {
   bool _foreground = true;
   bool _parked = false;
   bool _windowOpen = false;
+  bool _moving = false;
   DateTime _lastMovementAt = DateTime.now();
 
   Timer? _parkTimer;
@@ -301,8 +303,11 @@ class VeilidService {
     }
   }
 
-  /// Location hook: real movement (or driving speed) wakes the node instantly.
-  void noteMovement() {
+  /// Location hook: called on every fix. Movement keeps the node attached for
+  /// the whole trip; going still starts the park countdown.
+  void setMoving(bool moving) {
+    _moving = moving;
+    if (!moving) return;
     _lastMovementAt = DateTime.now();
     if (!_parked) return;
     _cancelTimers();
@@ -320,6 +325,14 @@ class VeilidService {
 
   Future<void> _park(String reason) => _serialize(() async {
         if (_foreground || !_started || _parked) return;
+        // Never park mid-trip, no matter how old the last transition was.
+        if (_moving) {
+          _parkTimer = Timer(const Duration(minutes: 1), () {
+            _parkTimer = null;
+            unawaited(_park(reason));
+          });
+          return;
+        }
         // A send window is in flight; try again once it has closed.
         if (_windowOpen) {
           _parkTimer = Timer(const Duration(minutes: 1), () {
