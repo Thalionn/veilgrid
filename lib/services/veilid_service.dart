@@ -1447,9 +1447,15 @@ class VeilidService {
   /// first attempt lands no longer breaks two-way linking.
   Future<void> sendLinkBack(String inviter, String token) async {
     if (token.isEmpty) return;
+    // A new invite starts a fresh retry budget; only the same invite keeps
+    // its original deadline.
+    final sameInvite =
+        _pendingLinkInviter == inviter && _pendingLinkToken == token;
     _pendingLinkInviter = inviter;
     _pendingLinkToken = token;
-    _pendingLinkSince ??= DateTime.now();
+    if (!sameInvite || _pendingLinkSince == null) {
+      _pendingLinkSince = DateTime.now();
+    }
     _linkAttempts = 0;
     await _persistPendingLink();
     DiagnosticsLog.instance.log(
