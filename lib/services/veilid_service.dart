@@ -73,6 +73,10 @@ class VeilidService {
   static const _contactNicknamesPrefKey = 'veilid_contact_nicknames';
   static const _nicknamesMigratedPrefKey = 'veilid_contact_nicknames_migrated';
   static const _contactKeysPrefKey = 'veilid_contact_public_keys';
+  static const _contactLocationsPrefKey = 'veilid_contact_locations';
+  static const _pendingLinkInviterPrefKey = 'pending_link_inviter';
+  static const _pendingLinkTokenPrefKey = 'pending_link_token';
+  static const _pendingLinkSincePrefKey = 'pending_link_since';
   // User-secret key (Veilid protected store) for the identity keypair.
   static const _myKeyPairSecretKey = 'grid_identity_keypair';
 
@@ -83,6 +87,16 @@ class VeilidService {
   final Set<String> _contactNicknames = {};
   bool _refreshingNames = false;
   bool _nicknamesMigrated = false;
+
+  // Two-way link handshake retry state. The invite is only considered done
+  // once the inviter answers with a signed profile.
+  String? _pendingLinkInviter;
+  String? _pendingLinkToken;
+  DateTime? _pendingLinkSince;
+  Timer? _linkRetryTimer;
+  int _linkAttempts = 0;
+  DateTime _lastLocationPersist = DateTime.fromMillisecondsSinceEpoch(0);
+  final Set<String> _loggedLocationFrom = <String>{};
 
 
   // My current route id, so a RouteChange update can tell when it died.
@@ -212,6 +226,7 @@ class VeilidService {
     // unresolved until the next send.
     await _restoreContacts();
     await _loadLinkBackToken();
+    _scheduleLinkFlush();
 
     // The app can be backgrounded while the node is still starting, in which
     // case the lifecycle callback ran before `_started` was set. Arm the park
@@ -295,6 +310,7 @@ class VeilidService {
     if (foreground) {
       _cancelTimers();
       unawaited(_resume('foreground'));
+      _scheduleLinkFlush();
     } else if (_started && !_parked && _parkTimer == null) {
       _parkTimer = Timer(_parkAfter, () {
         _parkTimer = null;
@@ -378,6 +394,7 @@ class VeilidService {
           await publishMyRoute();
           _windowOpen = true;
           DiagnosticsLog.instance.log('VEILID', 'ATTACH sync window');
+          _scheduleLinkFlush();
         } catch (e) {
           DiagnosticsLog.instance.log('VEILID', 'sync window failed: $e');
           _scheduleSync();
@@ -408,6 +425,7 @@ class VeilidService {
           _parked = false;
           _windowOpen = false;
           DiagnosticsLog.instance.log('VEILID', 'ATTACH $reason');
+          _scheduleLinkFlush();
         } catch (e) {
           DiagnosticsLog.instance.log('VEILID', 'ATTACH $reason failed: $e');
         }
@@ -501,6 +519,8 @@ class VeilidService {
     _contactNicknames
       ..clear()
       ..addAll(nicknames ?? const <String>[]);
+    await _loadPendingLink();
+    await _restoreContactLocations();
     _nicknamesMigrated =
         prefs.getBool(_nicknamesMigratedPrefKey) ?? false;
     if (!_nicknamesMigrated) {
@@ -613,7 +633,7 @@ class VeilidService {
     }
     // Allowlist: only people the user linked can influence this device.
     if (!_contactAddresses.contains(from)) {
-      _reject('sender is not a contact');
+      _reject('sender is not a contact', from: from);
       return;
     }
 
@@ -715,6 +735,30 @@ class VeilidService {
     };
     _locationController.add(loc);
     _contactLocations[from] = loc;
+    // Keep the last known position across restarts so the marker does not
+    // vanish until the contact sends again.
+    if (now.difference(_lastLocationPersist) >= const Duration(seconds: 30)) {
+      _lastLocationPersist = now;
+      unawaited(_persistContactLocations());
+    }
+    if (_loggedLocationFrom.add(from)) {
+      DiagnosticsLog.instance.log(
+          'LOC',
+          'first fix from ${_maskAddress(from)} '
+              'acc=${accuracy?.toStringAsFixed(0) ?? '?'}m');
+    } else if (prev != null) {
+      final age = now.difference(prev['ts'] is DateTime
+          ? prev['ts'] as DateTime
+          : now);
+      if (age >= const Duration(minutes: 10)) {
+        DiagnosticsLog.instance.log(
+            'LOC',
+            'fix after ${age.inMinutes}m gap from ${_maskAddress(from)}');
+      }
+    }
+    if (from == _pendingLinkInviter) {
+      _clearPendingLink('two-way location received');
+    }
     // Detect movement transitions ("started moving" / "stopped").
     if (prev != null) _detectMovement(from, prev, lat, lng, now);
   }
@@ -867,13 +911,16 @@ class VeilidService {
 
   /// Count a dropped message; log at most once per 30s so a flood cannot turn
   /// into a log storm (and so we never log coordinates or full addresses).
-  void _reject(String reason) {
+  void _reject(String reason, {String? from}) {
     _rejectedMessages++;
     final now = DateTime.now();
     if (now.difference(_lastRejectLog) < const Duration(seconds: 30)) return;
     _lastRejectLog = now;
+    final who = from == null ? '' : ' from ${_maskAddress(from)}';
     debugPrint(
-        '[Veilid] dropped $_rejectedMessages message(s); last reason: $reason');
+        '[Veilid] dropped $_rejectedMessages message(s); last reason: $reason$who');
+    DiagnosticsLog.instance.log(
+        'MSG', 'dropped: $reason$who (total $_rejectedMessages)');
   }
 
   /// Compare a new fix to the previous one and emit a movement alert on a
@@ -1206,9 +1253,28 @@ class VeilidService {
   /// published display name is used as the default local name.
   Future<void> addContact(String address) async {
     await _ensureStarted();
-    final routeId = await _importContactRoute(address);
-    _contactRoutes[address] = routeId;
-    _contactRouteResolvedAt[address] = DateTime.now();
+    final isNew = !_contactAddresses.contains(address);
+    if (isNew) {
+      _contactAddresses.add(address);
+      await _persistContacts();
+    }
+    DiagnosticsLog.instance.log(
+        'LINK', 'add ${_maskAddress(address)} new=$isNew');
+    // Route resolution is best-effort. The contact still belongs in the list
+    // when their node is parked or the DHT is briefly unavailable; the route
+    // is resolved again on the next send.
+    final started = DateTime.now();
+    try {
+      _contactRoutes[address] = await _importContactRoute(address);
+      _contactRouteResolvedAt[address] = DateTime.now();
+      DiagnosticsLog.instance.log(
+          'LINK',
+          'route resolved ${_maskAddress(address)} in '
+              '${DateTime.now().difference(started).inMilliseconds}ms');
+    } catch (e) {
+      DiagnosticsLog.instance.log(
+          'LINK', 'route resolve failed ${_maskAddress(address)}: $e');
+    }
     // Pull the contact's published name as a default (best-effort).
     try {
       final name = await _readContactName(address, forceRefresh: true);
@@ -1219,10 +1285,9 @@ class VeilidService {
         _contactNames[address] = name;
         await _persistContactNames();
       }
-    } catch (_) {}
-    if (!_contactAddresses.contains(address)) {
-      _contactAddresses.add(address);
-      await _persistContacts();
+    } catch (e) {
+      DiagnosticsLog.instance.log(
+          'LINK', 'name lookup failed ${_maskAddress(address)}: $e');
     }
     _contactsChangedController.add(null);
     unawaited(sendProfile(to: address));
@@ -1248,6 +1313,65 @@ class VeilidService {
     }
   }
 
+  Future<void> _persistContactLocations() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (_contactLocations.isEmpty) {
+      await prefs.remove(_contactLocationsPrefKey);
+      return;
+    }
+    final raw = <String, dynamic>{};
+    for (final e in _contactLocations.entries) {
+      final loc = e.value;
+      final ts = loc['ts'];
+      raw[e.key] = <String, dynamic>{
+        'lat': loc['lat'],
+        'lng': loc['lng'],
+        'accuracy': loc['accuracy'],
+        'battery': loc['battery'],
+        'charging': loc['charging'],
+        'ts': ts is DateTime ? ts.toUtc().toIso8601String() : null,
+      };
+    }
+    await prefs.setString(_contactLocationsPrefKey, jsonEncode(raw));
+  }
+
+  Future<void> _restoreContactLocations() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_contactLocationsPrefKey);
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final map = jsonDecode(raw) as Map<String, dynamic>;
+      var restored = 0;
+      for (final e in map.entries) {
+        if (!_contactAddresses.contains(e.key)) continue;
+        final v = e.value;
+        if (v is! Map<String, dynamic>) continue;
+        final lat = (v['lat'] as num?)?.toDouble();
+        final lng = (v['lng'] as num?)?.toDouble();
+        if (lat == null || lng == null || !isFiniteLatLng(lat, lng)) continue;
+        final ts =
+            DateTime.tryParse(v['ts'] as String? ?? '') ?? DateTime.now();
+        _contactLocations[e.key] = <String, dynamic>{
+          'lat': lat,
+          'lng': lng,
+          'accuracy': v['accuracy'],
+          'battery': v['battery'],
+          'charging': v['charging'],
+          'from': e.key,
+          'ts': ts,
+          'restored': true,
+        };
+        restored++;
+      }
+      if (restored > 0) {
+        DiagnosticsLog.instance.log(
+            'LOC', 'restored $restored last known position(s)');
+      }
+    } catch (e) {
+      debugPrint('[Veilid] restore locations failed: $e');
+    }
+  }
+
   Future<String> _signText(String canonical) async {
     final keyPair = await _keyPairOrCreate();
     final crypto = await _crypto(keyPair.key.kind);
@@ -1261,6 +1385,15 @@ class VeilidService {
   /// Sends my current name/avatar to contacts (or one contact).
   Future<void> sendProfile({String? to}) async {
     await _ensureStarted();
+    if (_parked) {
+      await _whileParkedWindow(
+          'profile window', () => _sendProfileNow(to: to));
+      return;
+    }
+    await _sendProfileNow(to: to);
+  }
+
+  Future<void> _sendProfileNow({String? to}) async {
     final context = _routingContext;
     if (context == null) return;
     final from = await myAddress();
@@ -1308,11 +1441,25 @@ class VeilidService {
   }
 
   /// Sends a signed "link me back" request to the inviter.
+  ///
+  /// The request is retried (across parked windows and app restarts) until the
+  /// inviter answers with a signed profile, so a node that is detached when the
+  /// first attempt lands no longer breaks two-way linking.
   Future<void> sendLinkBack(String inviter, String token) async {
     if (token.isEmpty) return;
-    await _ensureStarted();
+    _pendingLinkInviter = inviter;
+    _pendingLinkToken = token;
+    _pendingLinkSince ??= DateTime.now();
+    _linkAttempts = 0;
+    await _persistPendingLink();
+    DiagnosticsLog.instance.log(
+        'LINK', 'link-back queued for ${_maskAddress(inviter)}');
+    await _flushPendingLink();
+  }
+
+  Future<void> _sendLinkBackNow(String inviter, String token) async {
     final context = _routingContext;
-    if (context == null) return;
+    if (context == null) throw StateError('Veilid is not started');
     final from = await myAddress();
     if (from == inviter) return;
     final name = await myName();
@@ -1344,15 +1491,104 @@ class VeilidService {
       if (avatarB64 != null) 'avatar': avatarB64,
       'sig': signature,
     });
-    try {
-      final routeId = await _routeFor(inviter);
-      await context.appMessage(
-        TargetRouteId(routeId: routeId),
-        Uint8List.fromList(utf8.encode(payload)),
-      );
-    } catch (e) {
-      debugPrint('[Veilid] link-back send failed: $e');
+    final routeId = await _routeFor(inviter);
+    await context.appMessage(
+      TargetRouteId(routeId: routeId),
+      Uint8List.fromList(utf8.encode(payload)),
+    );
+    DiagnosticsLog.instance.log(
+        'LINK', 'link-back delivered to ${_maskAddress(inviter)}');
+  }
+
+  Future<void> _persistPendingLink() async {
+    final prefs = await SharedPreferences.getInstance();
+    final inviter = _pendingLinkInviter;
+    final token = _pendingLinkToken;
+    if (inviter == null || token == null) {
+      await prefs.remove(_pendingLinkInviterPrefKey);
+      await prefs.remove(_pendingLinkTokenPrefKey);
+      await prefs.remove(_pendingLinkSincePrefKey);
+      return;
     }
+    await prefs.setString(_pendingLinkInviterPrefKey, inviter);
+    await prefs.setString(_pendingLinkTokenPrefKey, token);
+    await prefs.setString(_pendingLinkSincePrefKey,
+        (_pendingLinkSince ?? DateTime.now()).toUtc().toIso8601String());
+  }
+
+  Future<void> _loadPendingLink() async {
+    final prefs = await SharedPreferences.getInstance();
+    _pendingLinkInviter = prefs.getString(_pendingLinkInviterPrefKey);
+    _pendingLinkToken = prefs.getString(_pendingLinkTokenPrefKey);
+    _pendingLinkSince =
+        DateTime.tryParse(prefs.getString(_pendingLinkSincePrefKey) ?? '');
+    if (_pendingLinkInviter != null &&
+        _pendingLinkToken != null &&
+        _pendingLinkToken!.isNotEmpty) {
+      DiagnosticsLog.instance.log('LINK',
+          'pending link-back restored for ${_maskAddress(_pendingLinkInviter!)}');
+    }
+  }
+
+  void _clearPendingLink(String reason) {
+    if (_pendingLinkInviter == null) return;
+    DiagnosticsLog.instance.log('LINK', 'link-back cleared ($reason)');
+    _pendingLinkInviter = null;
+    _pendingLinkToken = null;
+    _pendingLinkSince = null;
+    _linkAttempts = 0;
+    _linkRetryTimer?.cancel();
+    _linkRetryTimer = null;
+    unawaited(_persistPendingLink());
+  }
+
+  void _scheduleLinkFlush() {
+    if (_pendingLinkInviter == null) return;
+    unawaited(Future<void>.delayed(
+        const Duration(seconds: 1), _flushPendingLink));
+  }
+
+  Future<void> _flushPendingLink() async {
+    final inviter = _pendingLinkInviter;
+    final token = _pendingLinkToken;
+    if (inviter == null || token == null || token.isEmpty) return;
+    await _ensureStarted();
+    _linkRetryTimer?.cancel();
+    _linkRetryTimer = null;
+    final since = _pendingLinkSince ?? DateTime.now();
+    if (DateTime.now().difference(since) > const Duration(hours: 2)) {
+      _clearPendingLink('timed out after 2h');
+      return;
+    }
+    _linkAttempts++;
+    DiagnosticsLog.instance.log('LINK',
+        'link-back attempt $_linkAttempts for ${_maskAddress(inviter)}');
+    var sent = false;
+    try {
+      if (_parked) {
+        await _whileParkedWindow(
+            'link window', () => _sendLinkBackNow(inviter, token));
+      } else {
+        await _sendLinkBackNow(inviter, token);
+      }
+      sent = true;
+    } catch (e) {
+      DiagnosticsLog.instance.log(
+          'LINK', 'link-back attempt $_linkAttempts failed: $e');
+    }
+    if (_pendingLinkInviter == null) return;
+    // Keep trying even after a "successful" send: the inviter may have been
+    // detached when it arrived, and the send itself cannot tell us that.
+    final delay = sent
+        ? (_linkAttempts <= 3
+            ? const Duration(seconds: 45)
+            : const Duration(minutes: 3))
+        : (_linkAttempts <= 2
+            ? const Duration(seconds: 15)
+            : const Duration(minutes: 1));
+    DiagnosticsLog.instance.log(
+        'LINK', 'link-back retry in ${delay.inSeconds}s');
+    _linkRetryTimer = Timer(delay, () => unawaited(_flushPendingLink()));
   }
 
   Future<void> _handleProfile(Map<String, dynamic> payload) async {
@@ -1398,6 +1634,13 @@ class VeilidService {
       }
       _seenNonces.add(nonce);
       if (_seenNonces.length > 512) _seenNonces.remove(_seenNonces.first);
+      DiagnosticsLog.instance.log(
+          'LINK', 'profile from ${_maskAddress(from)} '
+              'name=${name.isEmpty ? '(none)' : 'yes'} '
+              'avatar=${avatar == null ? 'no' : 'yes'}');
+      if (from == _pendingLinkInviter) {
+        _clearPendingLink('profile received');
+      }
       if (!_nicknamesMigrated) await refreshContactNames();
       if (name.isNotEmpty &&
           !_contactNicknames.contains(from) &&
@@ -1418,21 +1661,50 @@ class VeilidService {
     try {
       await _loadLinkBackToken();
       final token = _linkBackToken;
-      if (token == null || token.isEmpty) return;
-      if (payload['v'] != 1) return;
+      if (token == null || token.isEmpty) {
+        DiagnosticsLog.instance.log(
+            'LINK', 'request rejected: this device has no active invite token');
+        return;
+      }
+      if (payload['v'] != 1) {
+        DiagnosticsLog.instance.log(
+            'LINK', 'request rejected: unsupported version');
+        return;
+      }
       final from = payload['from'];
-      if (from is! String || from.isEmpty || from == await myAddress()) return;
-      if (payload['token'] != token) return;
+      if (from is! String ||
+          from.isEmpty ||
+          from == await myAddress()) {
+        DiagnosticsLog.instance.log('LINK', 'request rejected: bad sender');
+        return;
+      }
+      if (payload['token'] != token) {
+        DiagnosticsLog.instance.log('LINK',
+            'request rejected: token mismatch from ${_maskAddress(from)}');
+        return;
+      }
       final tsRaw = payload['ts'];
       final nonce = payload['nonce'];
       final signature = payload['sig'];
-      if (tsRaw is! String || nonce is! String || signature is! String) return;
+      if (tsRaw is! String ||
+          nonce is! String ||
+          signature is! String) {
+        DiagnosticsLog.instance.log(
+            'LINK', 'request rejected: missing signature fields');
+        return;
+      }
       final ts = DateTime.tryParse(tsRaw);
       if (ts == null ||
           DateTime.now().toUtc().difference(ts.toUtc()).abs() > _maxClockSkew) {
+        DiagnosticsLog.instance.log('LINK',
+            'request rejected: stale timestamp from ${_maskAddress(from)}');
         return;
       }
-      if (_seenNonces.contains(nonce)) return;
+      if (_seenNonces.contains(nonce)) {
+        DiagnosticsLog.instance.log('LINK',
+            'request rejected: replay from ${_maskAddress(from)}');
+        return;
+      }
       final avatarB64 = payload['avatar'] is String ? payload['avatar'] as String : null;
       Uint8List? avatar;
       if (avatarB64 != null && avatarB64.isNotEmpty) {
@@ -1455,19 +1727,31 @@ class VeilidService {
         avatarHash,
       ].join('\n');
       final key = await _publicKeyFor(from);
-      if (key == null ||
-          !await _verifySignature(
-              key, Uint8List.fromList(utf8.encode(canonical)), signature)) {
+      if (key == null) {
+        DiagnosticsLog.instance.log('LINK',
+            'request rejected: identity key unavailable for '
+            '${_maskAddress(from)}');
+        return;
+      }
+      if (!await _verifySignature(
+          key, Uint8List.fromList(utf8.encode(canonical)), signature)) {
+        DiagnosticsLog.instance.log('LINK',
+            'request rejected: bad signature from ${_maskAddress(from)}');
         return;
       }
       _seenNonces.add(nonce);
       if (_seenNonces.length > 512) _seenNonces.remove(_seenNonces.first);
+      DiagnosticsLog.instance.log(
+          'LINK', 'request accepted from ${_maskAddress(from)} '
+              'name=${name.isEmpty ? '(none)' : 'yes'} '
+              'avatar=${avatar == null ? 'no' : 'yes'}');
       await addContact(from);
       if (avatar != null) {
         await AvatarStore.instance.setContactAvatar(from, avatar);
       }
       unawaited(sendProfile(to: from));
     } catch (e) {
+      DiagnosticsLog.instance.log('LINK', 'link request handling failed: $e');
       debugPrint('[Veilid] link-back handling failed: $e');
     }
   }
@@ -1616,6 +1900,10 @@ class VeilidService {
     _lastAcceptedAt.remove(address);
     _keyLookupAttemptedAt.remove(address);
 
+    if (address == _pendingLinkInviter) {
+      _clearPendingLink('contact removed');
+    }
+    unawaited(_persistContactLocations());
     await AvatarStore.instance.removeContactAvatar(address);
     await _persistContacts();
     await _persistPaused();
