@@ -11,6 +11,7 @@ import 'package:grid_frontend/utilities/geo_math.dart';
 import 'package:grid_frontend/models/place.dart';
 import 'package:grid_frontend/utilities/lat_lng_validation.dart';
 import 'avatar_store.dart';
+import 'diagnostics_log.dart';
 
 /// Veilid integration for the P2P app.
 ///
@@ -164,9 +165,11 @@ class VeilidService {
           enabled: false,
           level: VeilidConfigLogLevel.debug,
         ),
+        // Nothing in the app consumes VeilidUpdateLog; formatting and
+        // marshalling those events every second was pure background cost.
         api: VeilidFFIConfigLoggingApi(
-          enabled: true,
-          level: VeilidConfigLogLevel.info,
+          enabled: false,
+          level: VeilidConfigLogLevel.warn,
         ),
       ),
     );
@@ -209,6 +212,225 @@ class VeilidService {
     // unresolved until the next send.
     await _restoreContacts();
     await _loadLinkBackToken();
+
+    // The app can be backgrounded while the node is still starting, in which
+    // case the lifecycle callback ran before `_started` was set. Arm the park
+    // timer now instead of staying attached until the next lifecycle change.
+    if (!_foreground) setAppForeground(false);
+
+    // One-minute health sample: attachment, live peers and Veilid throughput.
+    // Cheap (one state read a minute) and it makes background costs visible in
+    // Settings -> Battery & tracking -> Battery diagnostics.
+    _stateTimer ??= Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => _logVeilidState(),
+    );
+  }
+
+  Timer? _stateTimer;
+  bool _stateBusy = false;
+
+  Future<void> _logVeilidState() async {
+    if (_stateBusy) return;
+    _stateBusy = true;
+    try {
+      final state = await Veilid.instance.getVeilidState();
+      final a = state.attachment;
+      final n = state.network;
+      DiagnosticsLog.instance.log(
+        'VEILID',
+        'state=${a.state.name} inet=${a.publicInternetReady} '
+        'live=${a.livePeerCount} reliable=${a.reliablePeerCount} '
+        'peers=${n.peers.length} down=${n.bpsDown} up=${n.bpsUp} '
+        'net=${a.estimatedNetworkSize} parked=$_parked fg=$_foreground '
+        'idle=${DateTime.now().difference(_lastMovementAt).inSeconds}s',
+      );
+    } catch (_) {
+      // State is best-effort diagnostics only.
+    } finally {
+      _stateBusy = false;
+    }
+  }
+
+  // --- Background duty cycle ------------------------------------------------
+  //
+  // A full Veilid node keeps ~32 peer connections and continuous DHT/route
+  // maintenance, which measured ~23% of one CPU core even when idle. That is
+  // far more than location tracking needs. While the UI is hidden and the
+  // phone is still, the node is parked (detached) and only wakes for a short
+  // sync window so queued messages can arrive and our route stays fresh.
+  // Movement or opening the app wakes it immediately.
+  static const Duration _parkAfter = Duration(minutes: 5);
+  static const Duration _syncEvery = Duration(minutes: 5);
+  static const Duration _syncWindow = Duration(seconds: 30);
+
+  bool _foreground = true;
+  bool _parked = false;
+  bool _windowOpen = false;
+  DateTime _lastMovementAt = DateTime.now();
+
+  Timer? _parkTimer;
+  Timer? _syncTimer;
+  Timer? _windowTimer;
+  Future<void> _powerOp = Future.value();
+
+  /// True while the node is detached as part of the background duty cycle.
+  bool get nodeParked => _parked;
+
+  /// Serializes attach/detach so a sync window cannot race an app resume.
+  Future<T> _serialize<T>(Future<T> Function() op) {
+    final next = _powerOp.then((_) => op());
+    _powerOp = next.then((_) {}, onError: (Object e) {
+      debugPrint('[Veilid] power op failed: $e');
+    });
+    return next;
+  }
+
+  /// App lifecycle hook: visible means stay attached; hidden starts the
+  /// countdown to parking.
+  void setAppForeground(bool foreground) {
+    _foreground = foreground;
+    if (foreground) {
+      _cancelTimers();
+      unawaited(_resume('foreground'));
+    } else if (_started && !_parked && _parkTimer == null) {
+      _parkTimer = Timer(_parkAfter, () {
+        _parkTimer = null;
+        unawaited(_park('still in background'));
+      });
+    }
+  }
+
+  /// Location hook: real movement (or driving speed) wakes the node instantly.
+  void noteMovement() {
+    _lastMovementAt = DateTime.now();
+    if (!_parked) return;
+    _cancelTimers();
+    unawaited(_resume('movement'));
+  }
+
+  void _cancelTimers() {
+    _parkTimer?.cancel();
+    _parkTimer = null;
+    _syncTimer?.cancel();
+    _syncTimer = null;
+    _windowTimer?.cancel();
+    _windowTimer = null;
+  }
+
+  Future<void> _park(String reason) => _serialize(() async {
+        if (_foreground || !_started || _parked) return;
+        // A send window is in flight; try again once it has closed.
+        if (_windowOpen) {
+          _parkTimer = Timer(const Duration(minutes: 1), () {
+            _parkTimer = null;
+            unawaited(_park(reason));
+          });
+          return;
+        }
+        // Never park in the middle of a trip, even if the UI is hidden.
+        final idle = DateTime.now().difference(_lastMovementAt);
+        if (idle < _parkAfter) {
+          DiagnosticsLog.instance.log(
+              'VEILID', 'DETACH deferred (movement ${idle.inSeconds}s ago)');
+          _parkTimer = Timer(_parkAfter - idle, () {
+            _parkTimer = null;
+            unawaited(_park(reason));
+          });
+          return;
+        }
+        _parked = true;
+        try {
+          await Veilid.instance.detach();
+          DiagnosticsLog.instance.log('VEILID', 'DETACH parked ($reason)');
+        } catch (e) {
+          _parked = false;
+          DiagnosticsLog.instance.log('VEILID', 'DETACH failed: $e');
+        }
+        if (_parked) _scheduleSync();
+      });
+
+  void _scheduleSync() {
+    if (!_parked || _syncTimer != null) return;
+    _syncTimer = Timer(_syncEvery, () {
+      _syncTimer = null;
+      unawaited(_openWindow());
+    });
+  }
+
+  Future<void> _openWindow() => _serialize(() async {
+        if (!_parked || _foreground) return;
+        try {
+          await Veilid.instance.attach();
+          await publishMyRoute();
+          _windowOpen = true;
+          DiagnosticsLog.instance.log('VEILID', 'ATTACH sync window');
+        } catch (e) {
+          DiagnosticsLog.instance.log('VEILID', 'sync window failed: $e');
+          _scheduleSync();
+          return;
+        }
+        _windowTimer = Timer(_syncWindow, () => unawaited(_closeWindow()));
+      });
+
+  Future<void> _closeWindow() => _serialize(() async {
+        _windowTimer = null;
+        if (!_parked || !_windowOpen) return;
+        _windowOpen = false;
+        try {
+          await Veilid.instance.detach();
+          DiagnosticsLog.instance.log('VEILID', 'DETACH sync window end');
+        } catch (e) {
+          DiagnosticsLog.instance.log('VEILID', 'sync window detach failed: $e');
+        }
+        _scheduleSync();
+      });
+
+  Future<void> _resume(String reason) => _serialize(() async {
+        if (!_started || !_parked) return;
+        _cancelTimers();
+        try {
+          await Veilid.instance.attach();
+          await publishMyRoute();
+          _parked = false;
+          _windowOpen = false;
+          DiagnosticsLog.instance.log('VEILID', 'ATTACH $reason');
+        } catch (e) {
+          DiagnosticsLog.instance.log('VEILID', 'ATTACH $reason failed: $e');
+        }
+      });
+
+  /// Runs [work] inside a temporary attach window while parked, then parks
+  /// again. Used for scheduled location sends so a heartbeat does not leave
+  /// the node attached for the rest of the day.
+  Future<T> _whileParkedWindow<T>(
+    String reason,
+    Future<T> Function() work,
+  ) async {
+    await _serialize(() async {
+      await Veilid.instance.attach();
+      await publishMyRoute();
+      _windowOpen = true;
+      DiagnosticsLog.instance.log('VEILID', 'ATTACH $reason');
+    });
+    try {
+      return await work();
+    } finally {
+      // The app may have come back (or the phone started moving) while the
+      // send was in flight; `_resume` has already attached for good.
+      if (_parked && !_foreground) {
+        await _serialize(() async {
+          _windowOpen = false;
+          try {
+            await Veilid.instance.detach();
+            DiagnosticsLog.instance.log('VEILID', 'DETACH $reason end');
+          } catch (e) {
+            DiagnosticsLog.instance.log('VEILID', 'DETACH $reason failed: $e');
+          }
+          _scheduleSync();
+        });
+      }
+    }
   }
 
   Future<void> _loadLinkBackToken() async {
@@ -324,6 +546,8 @@ class VeilidService {
   /// When my published route dies, mint a fresh one and rewrite my DHT record
   /// so contacts always resolve a live route.
   void _handleRouteChange(VeilidUpdateRouteChange update) {
+    // Detaching on purpose reports our route drained; do not fight it.
+    if (_parked) return;
     final mine = _myRouteId;
     if (mine == null || !update.deadRoutes.contains(mine)) return;
     if (_republishing) return;
@@ -1248,6 +1472,30 @@ class VeilidService {
     // Never sign or transmit a GPS value that could crash a recipient.
     if (!isFiniteLatLng(lat, lng)) return;
     await _ensureStarted();
+    if (_parked) {
+      // A scheduled heartbeat should not leave the node attached all day.
+      await _whileParkedWindow(
+        'send window',
+        () => _sendLocationNow(lat, lng,
+            accuracy: accuracy,
+            batteryLevel: batteryLevel,
+            isCharging: isCharging),
+      );
+      return;
+    }
+    await _sendLocationNow(lat, lng,
+        accuracy: accuracy,
+        batteryLevel: batteryLevel,
+        isCharging: isCharging);
+  }
+
+  Future<void> _sendLocationNow(
+    double lat,
+    double lng, {
+    double? accuracy,
+    double? batteryLevel,
+    bool? isCharging,
+  }) async {
     final context = _routingContext;
     // Snapshot the list: adds/removes can land while we await below.
     final addresses = List<String>.from(_contactAddresses);

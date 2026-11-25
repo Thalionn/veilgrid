@@ -12,6 +12,7 @@ import 'location/location_service_config.dart';
 import 'location/libre_location_service.dart';
 import 'location/location_dispatch.dart';
 import 'sharing_state_notifier.dart';
+import 'veilid_service.dart';
 import '../utilities/lat_lng_validation.dart';
 
 /// A simpler location manager relying on the plugin's own stop-detection.
@@ -163,6 +164,7 @@ class LocationManager with ChangeNotifier {
           case AppLifecycleState.resumed:
             DiagnosticsLog.instance.log('LIFECYCLE', 'foreground');
             _isInForeground = true;
+            VeilidService.instance.setAppForeground(true);
             _updateTrackingConfig();
             _applyTrackingPreset();
             break;
@@ -171,6 +173,7 @@ class LocationManager with ChangeNotifier {
           case AppLifecycleState.detached:
             DiagnosticsLog.instance.log('LIFECYCLE', 'background');
             _isInForeground = false;
+            VeilidService.instance.setAppForeground(false);
             _updateTrackingConfig();
             _applyTrackingPreset();
             break;
@@ -262,6 +265,8 @@ class LocationManager with ChangeNotifier {
         DiagnosticsLog.instance.log(
             'STILL', 'movement detected -> leaving forced low-power');
         _applyTrackingPreset();
+        // Real movement after a still spell: wake the parked Veilid node.
+        VeilidService.instance.noteMovement();
       }
       return;
     }
@@ -295,6 +300,7 @@ class LocationManager with ChangeNotifier {
         _speedDriving = true;
         DiagnosticsLog.instance.log('SPEED', 'fast fix -> driving');
         _applyTrackingPreset();
+        VeilidService.instance.noteMovement();
       }
     } else if (_speedDriving &&
         fix.speed < 2.0 &&
