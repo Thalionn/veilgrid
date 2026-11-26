@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:libre_location/libre_location.dart' as libre;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../diagnostics_log.dart';
 import '../sharing_state_notifier.dart';
 import '../location_manager.dart';
 
@@ -35,6 +36,10 @@ class HomeGeofenceService {
   static const double _minRadiusM = 50;
 
   StreamSubscription<libre.Position>? _positionSub;
+  StreamSubscription<libre.ActivityEvent>? _activitySub;
+  Timer? _probeTimer;
+  DateTime _lastProbe = DateTime.fromMillisecondsSinceEpoch(0);
+  static const Duration _probeEvery = Duration(minutes: 5);
   bool _started = false;
 
   double? _homeLat;
@@ -52,12 +57,21 @@ class HomeGeofenceService {
         debugPrint('[Home] position stream error: $e');
       },
     );
+    // While paused at home the tracker is on the passive tier and may deliver
+    // no fixes at all. Activity recognition still fires, so use it to probe.
+    _activitySub = libre.LibreLocation.onActivityChange.listen(
+      (event) => onActivity(event.activity),
+      onError: (Object e) => debugPrint('[Home] activity stream error: $e'),
+    );
     await syncFromPrefs();
   }
 
   Future<void> stop() async {
     await _positionSub?.cancel();
     _positionSub = null;
+    await _activitySub?.cancel();
+    _activitySub = null;
+    _stopProbeTimer();
     _monitoring = false;
     _started = false;
   }
@@ -108,7 +122,62 @@ class HomeGeofenceService {
     _homeLat = null;
     _homeLng = null;
     _radiusMeters = null;
+    _stopProbeTimer();
     _sharingState.setPausedAtHome(false);
+  }
+
+  /// Movement activity is a strong hint that the user left home even though
+  /// the paused preset is not delivering fixes. Probe once, then let the
+  /// normal radius check decide.
+  void onActivity(String activity) {
+    if (!_sharingState.pausedAtHome) return;
+    if (activity == 'in_vehicle' ||
+        activity == 'walking' ||
+        activity == 'running' ||
+        activity == 'on_bicycle') {
+      unawaited(_probe('activity $activity'));
+    }
+  }
+
+  Future<void> _probe(String reason) async {
+    if (!_monitoring || !_sharingState.pausedAtHome) return;
+    final now = DateTime.now();
+    if (now.difference(_lastProbe) < const Duration(seconds: 60)) return;
+    _lastProbe = now;
+    try {
+      final pos = await libre.LibreLocation.getCurrentPosition(
+        accuracy: libre.Accuracy.low,
+        samples: 1,
+        timeout: 20,
+        maximumAge: 60,
+        persist: false,
+      );
+      final meters = _distanceToHome(pos.latitude, pos.longitude);
+      DiagnosticsLog.instance.log(
+          'HOME', 'probe ($reason): ${meters?.round() ?? '?'}m from home');
+      _evaluate(pos.latitude, pos.longitude);
+    } catch (e) {
+      DiagnosticsLog.instance.log('HOME', 'probe failed ($reason): $e');
+    }
+  }
+
+  double? _distanceToHome(double lat, double lng) {
+    final homeLat = _homeLat;
+    final homeLng = _homeLng;
+    if (homeLat == null || homeLng == null) return null;
+    return distanceMeters(homeLat, homeLng, lat, lng);
+  }
+
+  void _startProbeTimer() {
+    _probeTimer ??= Timer.periodic(
+      _probeEvery,
+      (_) => unawaited(_probe('timer')),
+    );
+  }
+
+  void _stopProbeTimer() {
+    _probeTimer?.cancel();
+    _probeTimer = null;
   }
 
   void _evaluate(double lat, double lng) {
@@ -124,9 +193,15 @@ class HomeGeofenceService {
 
     if (!paused && meters <= radius) {
       _sharingState.setPausedAtHome(true);
+      DiagnosticsLog.instance.log(
+          'HOME', 'inside home (${meters.round()}m) -> sharing paused');
+      _startProbeTimer();
     } else if (paused && meters > radius + math.max(30, radius * 0.2)) {
       // Hysteresis keeps boundary jitter from flapping the pause state.
       _sharingState.setPausedAtHome(false);
+      DiagnosticsLog.instance.log(
+          'HOME', 'left home (${meters.round()}m) -> sharing resumed');
+      _stopProbeTimer();
     }
   }
 }

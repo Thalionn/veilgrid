@@ -12,6 +12,7 @@ import 'package:grid_frontend/models/place.dart';
 import 'package:grid_frontend/utilities/lat_lng_validation.dart';
 import 'avatar_store.dart';
 import 'diagnostics_log.dart';
+import 'sharing_state_notifier.dart';
 
 /// Veilid integration for the P2P app.
 ///
@@ -252,12 +253,23 @@ class VeilidService {
       final state = await Veilid.instance.getVeilidState();
       final a = state.attachment;
       final n = state.network;
+      final share = SharingStateNotifier.instance;
+      final pause = !share.isPaused
+          ? 'no'
+          : share.userIncognito
+              ? 'incognito'
+              : share.pausedAtHome
+                  ? 'home'
+                  : share.pausedForBattery
+                      ? 'battery'
+                      : 'yes';
       DiagnosticsLog.instance.log(
         'VEILID',
         'state=${a.state.name} inet=${a.publicInternetReady} '
         'live=${a.livePeerCount} reliable=${a.reliablePeerCount} '
         'peers=${n.peers.length} down=${n.bpsDown} up=${n.bpsUp} '
-        'net=${a.estimatedNetworkSize} parked=$_parked fg=$_foreground '
+        'net=${a.estimatedNetworkSize} pause=$pause '
+        'parked=$_parked fg=$_foreground '
         'moving=$_moving '
         'idle=${DateTime.now().difference(_lastMovementAt).inSeconds}s',
       );
