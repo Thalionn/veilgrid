@@ -99,6 +99,13 @@ class VeilidService {
   DateTime _lastLocationPersist = DateTime.fromMillisecondsSinceEpoch(0);
   final Set<String> _loggedLocationFrom = <String>{};
 
+  // Delivery counters shown in the per-minute diagnostics line.
+  int _sendCount = 0;
+  DateTime? _lastSendAt;
+  int _locCount = 0;
+  DateTime? _lastLocAt;
+  String _lastPauseReason = 'no';
+
 
   // My current route id, so a RouteChange update can tell when it died.
   String? _myRouteId;
@@ -246,6 +253,9 @@ class VeilidService {
   Timer? _stateTimer;
   bool _stateBusy = false;
 
+  static String _age(DateTime? t) =>
+      t == null ? 'never' : '${DateTime.now().difference(t).inSeconds}s';
+
   Future<void> _logVeilidState() async {
     if (_stateBusy) return;
     _stateBusy = true;
@@ -254,6 +264,21 @@ class VeilidService {
       final a = state.attachment;
       final n = state.network;
       final share = SharingStateNotifier.instance;
+      if (!share.isPaused != (_lastPauseReason == 'no')) {
+        _lastPauseReason = share.isPaused
+            ? (share.userIncognito
+                ? 'incognito'
+                : share.pausedAtHome
+                    ? 'home'
+                    : share.pausedForBattery
+                        ? 'battery'
+                        : 'yes')
+            : 'no';
+        DiagnosticsLog.instance.log('PAUSE',
+            _lastPauseReason == 'no'
+                ? 'sharing resumed'
+                : 'sharing paused ($_lastPauseReason)');
+      }
       final pause = !share.isPaused
           ? 'no'
           : share.userIncognito
@@ -269,6 +294,7 @@ class VeilidService {
         'live=${a.livePeerCount} reliable=${a.reliablePeerCount} '
         'peers=${n.peers.length} down=${n.bpsDown} up=${n.bpsUp} '
         'net=${a.estimatedNetworkSize} pause=$pause '
+        'tx=${_age(_lastSendAt)}/$_sendCount rx=${_age(_lastLocAt)}/$_locCount '
         'parked=$_parked fg=$_foreground '
         'moving=$_moving '
         'idle=${DateTime.now().difference(_lastMovementAt).inSeconds}s',
@@ -750,6 +776,8 @@ class VeilidService {
     };
     _locationController.add(loc);
     _contactLocations[from] = loc;
+    _locCount++;
+    _lastLocAt = now;
     // Keep the last known position across restarts so the marker does not
     // vanish until the contact sends again.
     if (now.difference(_lastLocationPersist) >= const Duration(seconds: 30)) {
@@ -1861,7 +1889,11 @@ class VeilidService {
       if (_pausedAddresses.contains(address)) continue;
       try {
         final routeId = await _routeFor(address);
-        await context.appMessage(TargetRouteId(routeId: routeId), bytes);
+        final ok = await _sendAppMessage(routeId, bytes);
+        if (ok) {
+          _sendCount++;
+          _lastSendAt = DateTime.now();
+        }
       } catch (e) {
         // Clear the cache so the next send re-resolves a possibly-dead route.
         _contactRoutes.remove(address);
@@ -1869,6 +1901,34 @@ class VeilidService {
         debugPrint('[Veilid] sendLocation failed for ${_maskAddress(address)}: $e');
       }
     }
+  }
+
+  /// Sends one app message, retrying briefly when the node is still attaching.
+  ///
+  /// Right after launch `appMessage` fails with TryAgain/offline for a few
+  /// seconds; without this retry the first fix after opening the app is lost.
+  Future<bool> _sendAppMessage(RouteId routeId, Uint8List bytes) async {
+    final context = _routingContext;
+    if (context == null) return false;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        await context.appMessage(TargetRouteId(routeId: routeId), bytes);
+        return true;
+      } catch (e) {
+        final text = e.toString();
+        final transient = text.contains('offline') ||
+            text.contains('NoConnection') ||
+            text.contains('TryAgain');
+        if (!transient) return false;
+        if (attempt == 2) {
+          DiagnosticsLog.instance.log(
+              'SEND', 'message failed after retries: $text');
+          return false;
+        }
+        await Future<void>.delayed(Duration(seconds: 3 * (attempt + 1)));
+      }
+    }
+    return false;
   }
 
   /// Cached route for [address], re-resolved every [_routeTtl].
